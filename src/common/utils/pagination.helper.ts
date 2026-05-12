@@ -5,9 +5,9 @@
 import { PaginationParams } from '../types';
 
 export class PaginationHelper {
-  static getPaginationParams(page?: number, limit?: number): PaginationParams {
+  static getPaginationParams(page?: number, limit?: number, maxLimit: number = 100): PaginationParams {
     const pageNum = Math.max(1, page || 1);
-    const limitNum = Math.min(Math.max(1, limit || 10), 100); // Max 100 items per page
+    const limitNum = Math.min(Math.max(1, limit || 10), maxLimit);
     const skip = (pageNum - 1) * limitNum;
 
     return {

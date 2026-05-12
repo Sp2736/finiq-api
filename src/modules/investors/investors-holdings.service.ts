@@ -469,6 +469,9 @@ export class InvestorsHoldingsService {
 
         const finalResult = {
             investor_name: investorName,
+            pan: investor.pan,
+            mobile: investor.mobile,
+            email: investor.email,
             ...aggregate,
             todays_pnl_percent: parseFloat(overallTodaysPnlPercent.toFixed(2)),
             abs_percent: parseFloat(overallAbsReturn.toFixed(2)),

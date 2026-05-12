@@ -51,9 +51,10 @@ export class HoldingsCacheController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
+    @Query('maxLimit') maxLimit?: number,
   ) {
     const companyId = this.getCompanyId(req.user);
-    const { page: pageNum, limit: limitNum } = PaginationHelper.getPaginationParams(page, limit);
+    const { page: pageNum, limit: limitNum } = PaginationHelper.getPaginationParams(page, limit, maxLimit ?? 5000);
     const { data, total } = await this.holdingsCacheService.getCompanyInvestorsList(companyId, pageNum ?? 1, limitNum ?? 10, search);
     return ResponseFormatter.paginated(data, total, pageNum ?? 1, limitNum ?? 10);
   }

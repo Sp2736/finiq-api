@@ -1,0 +1,1 @@
+* company ARN manager for annual reports from all the accounts, for the transactions and payroll
