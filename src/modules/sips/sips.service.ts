@@ -2,6 +2,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
@@ -10,29 +11,35 @@ export class SipsService {
   constructor(private readonly dataSource: DataSource) {}
 
   /**
-   * COMPANY LEVEL: Gets total SIP count and groups them by Investor
+   * COMPANY LEVEL: Gets total ACTIVE SIP count and groups them by Investor
    */
   async getCompanySipSummary(companyId: string) {
     try {
       const query = `
         WITH unified_sips AS (
+          -- CAMS Data 
           SELECT 
-            c.investor_id, 
-            inv.investor_name,
-            c.amount::numeric as sip_amount
+            inv.id as investor_id, 
+            COALESCE(inv.investor_name, c.inv_name) as investor_name,
+            COALESCE(c.auto_amount, 0)::numeric as sip_amount
           FROM cams_sip_stp_details c
-          JOIN investors inv ON c.investor_id = inv.id
+          JOIN investors inv ON inv.pan_no = c.pan
           WHERE inv.company_id = $1::uuid
+            AND (c.to_date IS NULL OR c.to_date >= CURRENT_DATE)
+            AND (c.cease_date IS NULL OR c.cease_date >= CURRENT_DATE) -- CAMS premature termination check
           
           UNION ALL
           
+          -- Karvy Data
           SELECT 
             k.investor_id, 
-            inv.investor_name,
-            k.installment_amount::numeric as sip_amount
+            COALESCE(inv.investor_name, k.investor_name) as investor_name,
+            COALESCE(k.amount, 0)::numeric as sip_amount
           FROM karvy_sip_registrations k
           JOIN investors inv ON k.investor_id = inv.id
           WHERE inv.company_id = $1::uuid
+            AND (k.end_date IS NULL OR k.end_date >= CURRENT_DATE)
+            AND (k.terminate_date IS NULL OR k.terminate_date >= CURRENT_DATE) -- KARVY premature termination check
         )
         SELECT 
           investor_id,
@@ -40,6 +47,7 @@ export class SipsService {
           COUNT(*) as total_sips,
           SUM(sip_amount) as total_sip_value
         FROM unified_sips
+        WHERE investor_id IS NOT NULL
         GROUP BY investor_id
         ORDER BY total_sip_value DESC;
       `;
@@ -64,6 +72,7 @@ export class SipsService {
         },
       };
     } catch (error) {
+      console.error('SIP Summary Error:', error);
       throw new InternalServerErrorException(
         error.message || 'Failed to fetch company SIP summary',
       );
@@ -71,42 +80,50 @@ export class SipsService {
   }
 
   /**
-   * INVESTOR LEVEL: Gets the specific list of SIPs for a single investor
+   * INVESTOR LEVEL: Gets the specific list of ACTIVE SIPs for a single investor
    */
   async getInvestorSips(investorId: string) {
     try {
       const query = `
+        -- CAMS
         SELECT 
-          id,
+          c.id,
           'CAMS' as source,
-          scheme_name as product_name,
-          folio_no,
-          amount::numeric as installment_amount,
-          frequency,
-          status,
-          start_date
-        FROM cams_sip_stp_details
-        WHERE investor_id = $1::uuid
+          c.scheme as product_name,
+          c.folio_no,
+          c.auto_amount::numeric as installment_amount,
+          c.periodicity as frequency,
+          'ACTIVE' as status,
+          c.from_date as start_date
+        FROM cams_sip_stp_details c
+        JOIN investors inv ON inv.pan_no = c.pan
+        WHERE inv.id = $1::uuid
+          AND (c.to_date IS NULL OR c.to_date >= CURRENT_DATE)
+          AND (c.cease_date IS NULL OR c.cease_date >= CURRENT_DATE) -- CAMS premature termination check
         
         UNION ALL
         
+        -- KARVY
         SELECT 
-          id,
+          k.id,
           'KARVY' as source,
-          scheme_name as product_name,
-          folio_number as folio_no,
-          installment_amount::numeric,
-          frequency,
-          status,
-          from_date as start_date
-        FROM karvy_sip_registrations
-        WHERE investor_id = $1::uuid
+          k.scheme_name as product_name,
+          k.folio_number as folio_no,
+          k.amount::numeric as installment_amount,
+          k.frequency,
+          k.status,
+          k.start_date
+        FROM karvy_sip_registrations k
+        WHERE k.investor_id = $1::uuid
+          AND (k.end_date IS NULL OR k.end_date >= CURRENT_DATE)
+          AND (k.terminate_date IS NULL OR k.terminate_date >= CURRENT_DATE) -- KARVY premature termination check
         ORDER BY start_date DESC;
       `;
 
       const results = await this.dataSource.query(query, [investorId]);
       return { success: true, data: results };
     } catch (error) {
+      console.error('Investor SIPs Error:', error);
       throw new InternalServerErrorException(
         error.message || 'Failed to fetch investor SIPs',
       );
@@ -114,7 +131,7 @@ export class SipsService {
   }
 
   /**
-   * DETAIL LEVEL: Gets the exact details for the Modal (matching your screenshot)
+   * DETAIL LEVEL: Gets the exact details for the Modal
    */
   async getSipDetail(source: string, id: string) {
     try {
@@ -123,14 +140,14 @@ export class SipsService {
         query = `
           SELECT 
             'CAMS' as rta,
-            scheme_name,
+            scheme as scheme_name,
             folio_no,
-            amount::numeric as sip_amount,
-            start_date as from_date,
-            end_date as to_date,
-            frequency,
-            status,
-            investor_name,
+            auto_amount::numeric as sip_amount,
+            from_date,
+            to_date,
+            periodicity as frequency,
+            'ACTIVE' as status,
+            inv_name as investor_name,
             remarks
           FROM cams_sip_stp_details
           WHERE id = $1::uuid
@@ -141,13 +158,13 @@ export class SipsService {
             'KARVY' as rta,
             scheme_name,
             folio_number as folio_no,
-            installment_amount::numeric as sip_amount,
-            from_date,
-            to_date,
+            amount::numeric as sip_amount,
+            start_date as from_date,
+            end_date as to_date,
             frequency,
             status,
             investor_name,
-            NULL as remarks -- Adjust if Karvy has a remarks column
+            NULL as remarks
           FROM karvy_sip_registrations
           WHERE id = $1::uuid
         `;
@@ -163,6 +180,7 @@ export class SipsService {
 
       return { success: true, data: results[0] };
     } catch (error) {
+      console.error('SIP Detail Error:', error);
       throw new InternalServerErrorException(
         error.message || 'Failed to fetch SIP details',
       );

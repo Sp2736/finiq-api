@@ -32,7 +32,7 @@ export class SipsController {
     return this.sipsService.getInvestorSips(investorId);
   }
 
-  // 3. SIP Detail Level: Specific SIP info matching your screenshot
+  // 3. SIP Detail Level: Specific SIP info
   @Get('detail/:source/:id')
   async getSipDetail(@Param('source') source: string, @Param('id') id: string) {
     return this.sipsService.getSipDetail(source, id);
