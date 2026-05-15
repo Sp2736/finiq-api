@@ -35,13 +35,6 @@ export class UserManagementController {
     return ResponseFormatter.success(result, 'User created successfully');
   }
 
-  @Post()
-  @UseGuards(JwtAuthGuard)
-  async createUser(@Req() req: any, @Body() dto: CreateCompanyUserDto) {
-    // Pass req.user down to the service!
-    return this.userManagementService.createUser(req.user, dto);
-  }
-
   @Get('all-users')
   @UseGuards(RoleGuard)
   @Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN)

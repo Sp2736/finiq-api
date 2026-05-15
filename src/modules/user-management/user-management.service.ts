@@ -38,21 +38,18 @@ export class UserManagementService {
 
   // ────────────── CREATE ──────────────
 
-  async createUser(currentUser: any, dto: CreateCompanyUserDto) {
-    // 1. Dynamically extract the company ID from the logged-in admin's token
-    const userCompanyId = currentUser.company_id; // (or currentUser.tenantId, depending on your JWT Strategy)
-
-    if (!userCompanyId) {
-      throw new UnauthorizedException('Invalid token: Missing Company Context');
+  async createUser(dto: CreateUserDto) {
+    if (!dto.company_id) {
+      throw new BadRequestException('Company context is missing');
     }
 
-    // 2. Inject it securely into the database creation object
-    const newRecord = this.userRepository.create({
-      ...dto,
-      company_id: userCompanyId, // <--- THIS FIXES THE CRASH
-    });
+    if (dto.role === CreateUserRole.SUB_BROKER) {
+      return this.createSubBroker(dto);
+    } else if (dto.role === CreateUserRole.INVESTOR) {
+      return this.createInvestor(dto);
+    }
 
-    return await this.userRepository.save(newRecord);
+    throw new BadRequestException('Invalid user role');
   }
 
   private async createSubBroker(dto: CreateUserDto) {
@@ -106,7 +103,7 @@ export class UserManagementService {
       throw new NotFoundException('Parent sub-broker not found');
     }
 
-    const companyId = '78097b6a-9366-4e5c-9c71-c918c8e23927';
+    const companyId = dto.company_id;
 
     const investor = this.investorRepo.create({
       name: dto.name,

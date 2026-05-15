@@ -3,7 +3,7 @@ import { AppModule } from './app.module';
 import {
   AllExceptionsFilter,
   ResponseInterceptor,
-  LoggingInterceptor
+  LoggingInterceptor,
 } from './common';
 
 async function bootstrap() {

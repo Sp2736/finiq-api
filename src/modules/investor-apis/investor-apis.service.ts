@@ -533,7 +533,9 @@ export class InvestorApisService {
                 h.security_name as company, 
                 h.asset_description as sector, 
                 h.asset_percentage as weightage, 
-                h.asset_class as asset_type
+                h.asset_class as asset_type,
+                h.num_of_shares as count,
+                h.asset_value as value
             FROM vr_fund_basic_details fbd
             JOIN vr_fund_holdings_details h ON h.plan_id = fbd.plan_id
             WHERE fbd.amfi_code = $1 

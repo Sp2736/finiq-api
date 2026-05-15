@@ -1,5 +1,13 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ApiErrorCode, ErrorMessages } from '../../common/constants/error-codes';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import {
+  ApiErrorCode,
+  ErrorMessages,
+} from '../../common/constants/error-codes';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { SubBroker } from '../../entities/sub-broker.entity';
@@ -12,51 +20,57 @@ import { KarvyBrokerageData } from '../../entities/karvy-brokerage-data.entity';
 
 @Injectable()
 export class BrokerageDistributionService {
-    private readonly logger = new Logger(BrokerageDistributionService.name);
+  private readonly logger = new Logger(BrokerageDistributionService.name);
 
-    constructor(
-        @InjectRepository(SubBroker)
-        private readonly subBrokerRepo: Repository<SubBroker>,
-        @InjectRepository(CommissionMapping)
-        private readonly commissionMappingRepo: Repository<CommissionMapping>,
-        @InjectRepository(ClientMapping)
-        private readonly clientMappingRepo: Repository<ClientMapping>,
-        @InjectRepository(BrokerageLedger)
-        private readonly brokerageLedgerRepo: Repository<BrokerageLedger>,
-        @InjectRepository(CamsBrokerageData)
-        private readonly camsBrokerageDataRepo: Repository<CamsBrokerageData>,
-        @InjectRepository(InvestorMapping)
-        private readonly investorMappingRepo: Repository<InvestorMapping>,
-        @InjectRepository(KarvyBrokerageData)
-        private readonly karvyBrokerageDataRepo: Repository<KarvyBrokerageData>,
-        private readonly dataSource: DataSource,
-    ) { }
+  constructor(
+    @InjectRepository(SubBroker)
+    private readonly subBrokerRepo: Repository<SubBroker>,
+    @InjectRepository(CommissionMapping)
+    private readonly commissionMappingRepo: Repository<CommissionMapping>,
+    @InjectRepository(ClientMapping)
+    private readonly clientMappingRepo: Repository<ClientMapping>,
+    @InjectRepository(BrokerageLedger)
+    private readonly brokerageLedgerRepo: Repository<BrokerageLedger>,
+    @InjectRepository(CamsBrokerageData)
+    private readonly camsBrokerageDataRepo: Repository<CamsBrokerageData>,
+    @InjectRepository(InvestorMapping)
+    private readonly investorMappingRepo: Repository<InvestorMapping>,
+    @InjectRepository(KarvyBrokerageData)
+    private readonly karvyBrokerageDataRepo: Repository<KarvyBrokerageData>,
+    private readonly dataSource: DataSource,
+  ) {}
 
-    /**
-     * Fetches AMC-wise brokerage breakdown for a specific sub-broker
-     */
-    async getBrokerAmcBreakdown(subBrokerId: string) {
-        const subBroker = await this.subBrokerRepo.findOne({
-            where: { id: subBrokerId },
-        });
-        if (!subBroker) throw new NotFoundException(ErrorMessages[ApiErrorCode.SUB_BROKER_NOT_FOUND]);
+  /**
+   * Fetches AMC-wise brokerage breakdown for a specific sub-broker
+   */
+  async getBrokerAmcBreakdown(subBrokerId: string) {
+    const subBroker = await this.subBrokerRepo.findOne({
+      where: { id: subBrokerId },
+    });
+    if (!subBroker)
+      throw new NotFoundException(
+        ErrorMessages[ApiErrorCode.SUB_BROKER_NOT_FOUND],
+      );
 
-        // Get share percentage for calculations
-        const commMapping = await this.commissionMappingRepo.findOne({
-            where: { sub_broker_id: subBrokerId }
-        });
-        const sharePercentage = commMapping ? Number(commMapping.share_percentage) : null;
+    // Get share percentage for calculations
+    const commMapping = await this.commissionMappingRepo.findOne({
+      where: { sub_broker_id: subBrokerId },
+    });
+    const sharePercentage = commMapping
+      ? Number(commMapping.share_percentage)
+      : null;
 
-        // Get investor mappings for this sub-broker
-        const investorMappings = await this.investorMappingRepo.find({
-            where: { sub_broker_id: subBrokerId }
-        });
-        const investorIds = investorMappings.map(m => m.investor_id);
+    // Get investor mappings for this sub-broker
+    const investorMappings = await this.investorMappingRepo.find({
+      where: { sub_broker_id: subBrokerId },
+    });
+    const investorIds = investorMappings.map((m) => m.investor_id);
 
-        if (!investorIds.length) return [];
+    if (!investorIds.length) return [];
 
-        // 1. CAMS Data Query
-        const camsData = await this.camsBrokerageDataRepo.query(`
+    // 1. CAMS Data Query
+    const camsData = await this.camsBrokerageDataRepo.query(
+      `     
             SELECT 
                 csd.amc AS amc_name,
                 SUM(cbd.brkage_amt) AS total_brokerage
@@ -67,10 +81,13 @@ export class BrokerageDistributionService {
             ) csd ON csd.amc_code = cbd.amc_code
             WHERE cbd.investor_id = ANY($1)
             GROUP BY csd.amc
-        `, [investorIds]);
+        `,
+      [investorIds],
+    );
 
-        // 2. Karvy Data Query
-        const karvyData = await this.karvyBrokerageDataRepo.query(`
+    // 2. Karvy Data Query
+    const karvyData = await this.karvyBrokerageDataRepo.query(
+      `
             SELECT 
                 ksd.amc_name,
                 SUM(kbd.brokerage_in_rs) AS total_brokerage
@@ -81,41 +98,50 @@ export class BrokerageDistributionService {
             ) ksd ON kbd.fund = ksd.amc_code
             WHERE kbd.investor_id = ANY($1)
             GROUP BY ksd.amc_name
-        `, [investorIds]);
+        `,
+      [investorIds],
+    );
 
-        // 3. Normalize and Merge
-        const mergeMap = new Map<string, number>();
+    // 3. Normalize and Merge
+    const mergeMap = new Map<string, number>();
 
-        camsData.forEach(r => {
-            const name = r.amc_name || 'Other CAMS';
-            mergeMap.set(name, (mergeMap.get(name) || 0) + (Number(r.total_brokerage) || 0));
-        });
+    camsData.forEach((r) => {
+      const name = r.amc_name || 'Other CAMS';
+      mergeMap.set(
+        name,
+        (mergeMap.get(name) || 0) + (Number(r.total_brokerage) || 0),
+      );
+    });
 
-        karvyData.forEach(r => {
-            const name = r.amc_name || 'Other Karvy';
-            mergeMap.set(name, (mergeMap.get(name) || 0) + (Number(r.total_brokerage) || 0));
-        });
+    karvyData.forEach((r) => {
+      const name = r.amc_name || 'Other Karvy';
+      mergeMap.set(
+        name,
+        (mergeMap.get(name) || 0) + (Number(r.total_brokerage) || 0),
+      );
+    });
 
-        // 4. Final Calculations
-        return Array.from(mergeMap.entries()).map(([amc_name, gross]) => {
-            const paid = sharePercentage !== null ? (gross * sharePercentage) / 100 : 0;
-            const net = sharePercentage !== null ? gross - paid : gross;
-            return {
-                amc_name,
-                gross_receivable: gross,
-                paid: paid,
-                net_receivable: net
-            };
-        });
-    }
+    // 4. Final Calculations
+    return Array.from(mergeMap.entries()).map(([amc_name, gross]) => {
+      const paid =
+        sharePercentage !== null ? (gross * sharePercentage) / 100 : 0;
+      const net = sharePercentage !== null ? gross - paid : gross;
+      return {
+        amc_name,
+        gross_receivable: gross,
+        paid: paid,
+        net_receivable: net,
+      };
+    });
+  }
 
-    /**
-     * Lists all sub-brokers for a given company based on investor mappings
-     */
-    async getSubBrokers(companyId: string) {
-        // We use the query provided by the user to get sub-brokers and their mappings
-        // Grouping by Sub Broker ID to provide a clean list
-        const query = `
+  /**
+   * Lists all sub-brokers for a given company based on investor mappings
+   */
+  async getSubBrokers(companyId: string) {
+    // We use the query provided by the user to get sub-brokers and their mappings
+    // Grouping by Sub Broker ID to provide a clean list
+    const query = `
             SELECT 
                 s.id,
                 s.name,
@@ -131,75 +157,94 @@ export class BrokerageDistributionService {
             ORDER BY s.name ASC
         `;
 
-        const data = await this.subBrokerRepo.query(query, [companyId]);
-        return { data };
-    }
+    const data = await this.subBrokerRepo.query(query, [companyId]);
+    return { data };
+  }
 
-    /**
-     * Retrieves hierarchical brokerage data using raw registry tables.
-     */
-    async getHierarchyBrokerage(
-        companyId: string,
-        type: 'amc' | 'scheme' | 'client',
-        month: number,
-        year: number,
-    ) {
-        // Fallback or legacy support for the current hierarchy structure if needed
-        // but the user wants to focus on the simple list now.
-        // Returning empty for now to avoid errors while we transition.
-        return { data: [], totals: null };
-    }
+  /**
+   * Retrieves hierarchical brokerage data using raw registry tables.
+   */
+  async getHierarchyBrokerage(
+    companyId: string,
+    type: 'amc' | 'scheme' | 'client',
+    month: number,
+    year: number,
+  ) {
+    // Fallback or legacy support for the current hierarchy structure if needed
+    // but the user wants to focus on the simple list now.
+    // Returning empty for now to avoid errors while we transition.
+    return { data: [], totals: null };
+  }
 
-    async processAllCamsBrokerage(): Promise<void> {
-        // Not implemented for now as per user request to simplify
-    }
+  async processAllCamsBrokerage(): Promise<void> {
+    // Not implemented for now as per user request to simplify
+  }
 
-    async getSubBrokerAmcAggregation(companyId: string, fromDate: string, toDate: string) {
-        // Reuse the detailed logic but map it to the response format expected by this legacy endpoint
-        const detailedData = await this.getDetailedBrokerageDistribution(companyId, fromDate, toDate, 'amc');
+  async getSubBrokerAmcAggregation(
+    companyId: string,
+    fromDate: string,
+    toDate: string,
+  ) {
+    // Reuse the detailed logic but map it to the response format expected by this legacy endpoint
+    const detailedData = await this.getDetailedBrokerageDistribution(
+      companyId,
+      fromDate,
+      toDate,
+      'amc',
+    );
 
-        const subBrokers = detailedData.sub_brokers.map(sb => {
-            const amcList = sb.amc_wise_brokerage || [];
+    const subBrokers = detailedData.sub_brokers.map((sb) => {
+      const amcList = sb.amc_wise_brokerage || [];
 
-            // Calculate totals for this sub-broker based on the breakdown
-            const totalGross = amcList.reduce((sum: number, item: any) => sum + (item.total_brokerage || 0), 0);
-            const totalPaid = amcList.reduce((sum: number, item: any) => sum + (item.paid_brokerage || 0), 0);
-            const totalNet = amcList.reduce((sum: number, item: any) => sum + (item.net_brokerage || 0), 0);
+      // Calculate totals for this sub-broker based on the breakdown
+      const totalGross = amcList.reduce(
+        (sum: number, item: any) => sum + (item.total_brokerage || 0),
+        0,
+      );
+      const totalPaid = amcList.reduce(
+        (sum: number, item: any) => sum + (item.paid_brokerage || 0),
+        0,
+      );
+      const totalNet = amcList.reduce(
+        (sum: number, item: any) => sum + (item.net_brokerage || 0),
+        0,
+      );
 
-            return {
-                sub_broker_id: sb.sub_broker_id,
-                sub_broker_name: sb.sub_broker_name,
-                total_gross_receivable: Number(totalGross.toFixed(2)),
-                total_paid: Number(totalPaid.toFixed(2)),
-                total_net_receivable: Number(totalNet.toFixed(2)),
-                amc_wise_brokerage: amcList.map((amc: any) => ({
-                    amc_name: amc.amc_name,
-                    gross_receivable: amc.total_brokerage,
-                    paid: amc.paid_brokerage,
-                    net_receivable: amc.net_brokerage
-                }))
-            };
-        });
+      return {
+        sub_broker_id: sb.sub_broker_id,
+        sub_broker_name: sb.sub_broker_name,
+        total_gross_receivable: Number(totalGross.toFixed(2)),
+        total_paid: Number(totalPaid.toFixed(2)),
+        total_net_receivable: Number(totalNet.toFixed(2)),
+        amc_wise_brokerage: amcList.map((amc: any) => ({
+          amc_name: amc.amc_name,
+          gross_receivable: amc.total_brokerage,
+          paid: amc.paid_brokerage,
+          net_receivable: amc.net_brokerage,
+        })),
+      };
+    });
 
-        return {
-            total_gross_receivable: detailedData.total_gross_brokerage_report,
-            total_paid: detailedData.total_paid_brokerage_report,
-            total_net_receivable: detailedData.total_net_brokerage_report,
-            sub_brokers: subBrokers
-        };
-    }
-    /**
-     * Executes a comprehensive brokerage distribution report for a company admin.
-     * Note: This data can be GROUPED BY Sub-Broker and either AMC or Investor.
-     * It incorporates CAMS/Karvy raw data, sharing hierarchies, and window functions for report totals.
-     */
-    async getDetailedBrokerageDistribution(
-        companyId: string,
-        fromDate: string,
-        toDate: string,
-        groupBy: 'amc' | 'investor' = 'amc'
-    ) {
-        const amcQuery = `
+    return {
+      total_gross_receivable: detailedData.total_gross_brokerage_report,
+      total_paid: detailedData.total_paid_brokerage_report,
+      total_net_receivable: detailedData.total_net_brokerage_report,
+      sub_brokers: subBrokers,
+    };
+  }
+
+  /**
+   * Executes a comprehensive brokerage distribution report for a company admin.
+   * Note: This data can be GROUPED BY Sub-Broker and either AMC or Investor.
+   * It incorporates CAMS/Karvy raw data, sharing hierarchies, and window functions for report totals.
+   */
+  async getDetailedBrokerageDistribution(
+    companyId: string,
+    fromDate: string,
+    toDate: string,
+    groupBy: 'amc' | 'investor' = 'amc',
+  ) {
+    const amcQuery = `
         WITH broker_hierarchy AS (
             SELECT
                 sb.id                   AS sub_broker_id,
@@ -323,7 +368,7 @@ export class BrokerageDistributionService {
         FROM final_summary;
         `;
 
-        const investorQuery = `
+    const investorQuery = `
         WITH broker_hierarchy AS (
             SELECT
                 sb.id                   AS sub_broker_id,
@@ -427,26 +472,65 @@ export class BrokerageDistributionService {
         FROM final_summary;
         `;
 
-        const query = groupBy === 'investor' ? investorQuery : amcQuery;
-        const rawData = await this.dataSource.query(query, [companyId, fromDate, toDate]);
+    const query = groupBy === 'investor' ? investorQuery : amcQuery;
+    const rawData = await this.dataSource.query(query, [
+      companyId,
+      fromDate,
+      toDate,
+    ]);
 
-        if (!rawData.length || !rawData[0].sub_brokers) {
-            return {
-                total_gross_brokerage_report: 0,
-                total_paid_brokerage_report: 0,
-                total_net_brokerage_report: 0,
-                sub_brokers: []
-            };
-        }
-
-        // The query now returns the full structure as a single row thanks to JSONB_AGG
-        const result = rawData[0];
-        
-        return {
-            total_gross_brokerage_report: Number(result.total_gross_brokerage_report) || 0,
-            total_paid_brokerage_report: Number(result.total_paid_brokerage_report) || 0,
-            total_net_brokerage_report: Number(result.total_net_brokerage_report) || 0,
-            sub_brokers: result.sub_brokers || []
-        };
+    if (!rawData.length || !rawData[0].sub_brokers) {
+      return {
+        total_gross_brokerage_report: 0,
+        total_paid_brokerage_report: 0,
+        total_net_brokerage_report: 0,
+        sub_brokers: [],
+      };
     }
+
+    // The query now returns the full structure as a single row thanks to JSONB_AGG
+    const result = rawData[0];
+
+    return {
+      total_gross_brokerage_report:
+        Number(result.total_gross_brokerage_report) || 0,
+      total_paid_brokerage_report:
+        Number(result.total_paid_brokerage_report) || 0,
+      total_net_brokerage_report:
+        Number(result.total_net_brokerage_report) || 0,
+      sub_brokers: result.sub_brokers || [],
+    };
+  }
+
+  // ─── NEW LEDGER ENTRY ADDITION ───
+  async addLedgerEntry(payload: any) {
+    try {
+      // This query inserts directly into our new manual_payout_ledger table
+      // It automatically sets the transaction_type, status, and a default remark.
+      const query = `
+                INSERT INTO public.manual_payout_ledger 
+                (source_account_id, destination_account_id, payment_mode, transfer_amount, reference_id, transaction_type, status, remarks)
+                VALUES ($1, $2, $3, $4, $5, 'MANUAL_PAYOUT', $6, $7)
+                RETURNING *;
+            `;
+
+      const values = [
+        payload.source_account_id,
+        payload.destination_account_id,
+        payload.payment_mode,
+        payload.transfer_amount,
+        payload.reference_id || null,
+        'COMPLETED', // Setting the default status
+        'Manual payout recorded via Administrator Portal', // Setting the default remark
+      ];
+
+      const result = await this.dataSource.query(query, values);
+      return { success: true, data: result[0] };
+    } catch (error) {
+      this.logger.error(`Failed to add ledger entry: ${error.message}`);
+      throw new InternalServerErrorException(
+        error.message || 'Failed to record ledger entry',
+      );
+    }
+  }
 }

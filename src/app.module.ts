@@ -29,6 +29,9 @@ import { CapitalGainsModule } from './modules/capital-gains/capital-gains.module
 import { HoldingsCacheModule } from './modules/holdings-cache/holdings-cache.module';
 import { ScrapingModule } from './modules/scraping/scraping.module';
 import { BullModule } from '@nestjs/bull';
+import { BrokerTransactionsModule } from './modules/broker-transactions/broker-transactions.module';
+import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module';
+import { SipsModule } from './modules/sips/sips.module';
 
 @Module({
   imports: [
@@ -74,6 +77,9 @@ import { BullModule } from '@nestjs/bull';
         port: 6379,
       },
     }),
+    BrokerTransactionsModule,
+    BankAccountsModule,
+    SipsModule,
   ],
 
   controllers: [AppController],
