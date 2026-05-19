@@ -12,47 +12,67 @@ export class SipsService {
 
   /**
    * COMPANY LEVEL: Gets total ACTIVE SIP count and groups them by Investor
+   * Added search parameter for frontend filtering.
    */
-  async getCompanySipSummary(companyId: string) {
+  async getCompanySipSummary(companyId: string, search?: string) {
     try {
       const query = `
         WITH unified_sips AS (
-          -- CAMS Data 
-          SELECT 
-            inv.id as investor_id, 
-            COALESCE(inv.investor_name, c.inv_name) as investor_name,
-            COALESCE(c.auto_amount, 0)::numeric as sip_amount
-          FROM cams_sip_stp_details c
-          JOIN investors inv ON inv.pan_no = c.pan
+          -- CAMS Active SIPs
+          SELECT
+            cs.investor_id as investor_id,
+            COALESCE(inv.investor_name, cd.inv_name) as investor_name,
+            COALESCE(cd.auto_amount, 0)::numeric as sip_amount
+          FROM cams_investor_static_details cs
+          JOIN cams_sip_stp_details cd
+            ON cs.foliochk = cd.folio_no
+            AND cs.product = CONCAT(cd.amc_code, cd.scheme_code)
+          JOIN investors inv
+            ON inv.id = cs.investor_id
           WHERE inv.company_id = $1::uuid
-            AND (c.to_date IS NULL OR c.to_date >= CURRENT_DATE)
-            AND (c.cease_date IS NULL OR c.cease_date >= CURRENT_DATE) -- CAMS premature termination check
-          
+            AND cd.cease_date IS NULL
+
           UNION ALL
-          
-          -- Karvy Data
-          SELECT 
-            k.investor_id, 
-            COALESCE(inv.investor_name, k.investor_name) as investor_name,
-            COALESCE(k.amount, 0)::numeric as sip_amount
-          FROM karvy_sip_registrations k
-          JOIN investors inv ON k.investor_id = inv.id
+
+          -- KARVY Active SIPs
+          SELECT
+            km.investor_id as investor_id,
+            COALESCE(inv.investor_name, kr.investor_name) as investor_name,
+            COALESCE(kr.amount, 0)::numeric as sip_amount
+          FROM karvy_investor_master_data km
+          JOIN karvy_sip_registrations kr
+            ON km.folio = kr.folio_number
+            AND km.product_code = kr.product_code
+          JOIN investors inv
+            ON inv.id = km.investor_id
           WHERE inv.company_id = $1::uuid
-            AND (k.end_date IS NULL OR k.end_date >= CURRENT_DATE)
-            AND (k.terminate_date IS NULL OR k.terminate_date >= CURRENT_DATE) -- KARVY premature termination check
+            AND kr.terminate_date IS NULL
+            AND (
+              LOWER(kr.status) LIKE '%live%'
+              OR LOWER(kr.status) LIKE '%active%'
+            )
         )
-        SELECT 
+
+        SELECT
           investor_id,
           MAX(investor_name) as investor_name,
           COUNT(*) as total_sips,
           SUM(sip_amount) as total_sip_value
         FROM unified_sips
         WHERE investor_id IS NOT NULL
+          -- Apply search filter dynamically if provided
+          AND ($2::text IS NULL OR investor_name ILIKE $2)
         GROUP BY investor_id
         ORDER BY total_sip_value DESC;
       `;
 
-      const results = await this.dataSource.query(query, [companyId]);
+      // If a search term exists, wrap it in % wildcards for partial matching. Otherwise pass null.
+      const searchParam = search ? `%${search}%` : null;
+
+      const results = await this.dataSource.query(query, [
+        companyId,
+        searchParam,
+      ]);
 
       const totalSips = results.reduce(
         (acc, curr) => acc + Number(curr.total_sips),
@@ -85,38 +105,46 @@ export class SipsService {
   async getInvestorSips(investorId: string) {
     try {
       const query = `
-        -- CAMS
+        -- CAMS Active SIPs
         SELECT 
-          c.id,
+          cd.id,
           'CAMS' as source,
-          c.scheme as product_name,
-          c.folio_no,
-          c.auto_amount::numeric as installment_amount,
-          c.periodicity as frequency,
+          cd.scheme as product_name,
+          cd.folio_no,
+          cd.auto_amount::numeric as installment_amount,
+          cd.periodicity as frequency,
           'ACTIVE' as status,
-          c.from_date as start_date
-        FROM cams_sip_stp_details c
-        JOIN investors inv ON inv.pan_no = c.pan
-        WHERE inv.id = $1::uuid
-          AND (c.to_date IS NULL OR c.to_date >= CURRENT_DATE)
-          AND (c.cease_date IS NULL OR c.cease_date >= CURRENT_DATE) -- CAMS premature termination check
-        
+          cd.from_date as start_date
+        FROM cams_investor_static_details cs
+        JOIN cams_sip_stp_details cd
+          ON cs.foliochk = cd.folio_no
+          AND cs.product = CONCAT(cd.amc_code, cd.scheme_code)
+        WHERE cs.investor_id = $1::uuid
+          AND cd.cease_date IS NULL
+
         UNION ALL
-        
-        -- KARVY
-        SELECT 
-          k.id,
+
+        -- KARVY Active SIPs
+        SELECT
+          kr.id,
           'KARVY' as source,
-          k.scheme_name as product_name,
-          k.folio_number as folio_no,
-          k.amount::numeric as installment_amount,
-          k.frequency,
-          k.status,
-          k.start_date
-        FROM karvy_sip_registrations k
-        WHERE k.investor_id = $1::uuid
-          AND (k.end_date IS NULL OR k.end_date >= CURRENT_DATE)
-          AND (k.terminate_date IS NULL OR k.terminate_date >= CURRENT_DATE) -- KARVY premature termination check
+          kr.scheme_name as product_name,
+          kr.folio_number as folio_no,
+          kr.amount::numeric as installment_amount,
+          kr.frequency,
+          'ACTIVE' as status,
+          kr.start_date
+        FROM karvy_investor_master_data km
+        JOIN karvy_sip_registrations kr
+          ON km.folio = kr.folio_number
+          AND km.product_code = kr.product_code
+        WHERE km.investor_id = $1::uuid
+          AND kr.terminate_date IS NULL
+          AND (
+            LOWER(kr.status) LIKE '%live%'
+            OR LOWER(kr.status) LIKE '%active%'
+          )
+
         ORDER BY start_date DESC;
       `;
 
@@ -162,7 +190,7 @@ export class SipsService {
             start_date as from_date,
             end_date as to_date,
             frequency,
-            status,
+            TRIM(status) as status,
             investor_name,
             NULL as remarks
           FROM karvy_sip_registrations
