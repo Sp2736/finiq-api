@@ -294,4 +294,63 @@ export class InvestorController {
     const gains = await this.holdingsService.getCapitalGainsReport(targetInvestorId, start_date, end_date);
     return ResponseFormatter.success(gains, 'Capital gains retrieved successfully');
   }
+
+  /**
+   * POST /api/investors/transaction-report
+   * Get investor's transaction report
+   */
+  @Post('transaction-report')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getTransactionReport(@Body() body: any, @Req() req: any) {
+    const { investor_id } = body;
+    const userSnapshot = req.user;
+    let targetInvestorId = investor_id;
+
+    if (userSnapshot.type === 'investor') {
+      // If investor, they can only view their own
+      if (investor_id && investor_id !== userSnapshot.id) {
+        throw new ForbiddenException('You can only view your own transactions');
+      }
+      targetInvestorId = userSnapshot.id;
+    } else {
+      if (!targetInvestorId) {
+        throw new BadRequestException('investor_id is required in the request body for admins');
+      }
+      
+      // Admin/Broker access checks
+      if (!userSnapshot.roles) {
+        throw new ForbiddenException('User roles not found');
+      }
+
+      const isAdmin = userSnapshot.roles.some((r: any) =>
+        [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+      );
+
+      if (!isAdmin) {
+        const brokerProfiles = userSnapshot.roles.filter((r: any) =>
+          [UserRole.BROKER, UserRole.SUB_BROKER].includes(r.role),
+        );
+
+        if (brokerProfiles.length === 0) {
+          throw new ForbiddenException('You do not have permission to view transactions');
+        }
+
+        let hasAccess = false;
+        for (const profile of brokerProfiles) {
+          if (await this.investorService.checkBrokerAccess(profile.id, targetInvestorId)) {
+            hasAccess = true;
+            break;
+          }
+        }
+
+        if (!hasAccess) {
+          throw new ForbiddenException('You do not have access to this investor transactions');
+        }
+      }
+    }
+
+    const report = await this.holdingsService.getTransactionReport(targetInvestorId);
+    return ResponseFormatter.success(report, 'Transactions retrieved successfully');
+  }
 }
