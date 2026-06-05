@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
@@ -213,5 +214,188 @@ export class SipsService {
         error.message || 'Failed to fetch SIP details',
       );
     }
+  }
+
+  /**
+   * Generates systematic reports (SIP / STP / SWP) for distributor/admin access.
+   */
+  async getSystematicReport(
+    user: any,
+    type?: string,
+    status?: string,
+    arnIds?: string[],
+  ) {
+    const companyId =
+      user?.roles?.find((r: any) => r.company_id)?.company_id ||
+      user?.company_id;
+
+    if (!companyId) {
+      throw new BadRequestException('Company ID not found in user context');
+    }
+
+    // 1. Validate 'type' parameter
+    if (type) {
+      const typeUpper = type.toUpperCase();
+      if (!['SIP', 'STP', 'SWP'].includes(typeUpper)) {
+        throw new BadRequestException('Invalid systematic type');
+      }
+    }
+
+    // 2. Validate 'status' parameter
+    if (status) {
+      const statusUpper = status.toUpperCase();
+      if (
+        ![
+          'CURRENTLY_RUNNING',
+          'FORTHCOMING',
+          'PREMATURELY_TERMINATED',
+          'DUE_TO_MATURITY',
+        ].includes(statusUpper)
+      ) {
+        throw new BadRequestException('Invalid status value');
+      }
+    }
+
+    // 3. Validate 'arnIds' parameter
+    const hasArnFilter = arnIds && arnIds.length > 0;
+    if (hasArnFilter) {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      for (const id of arnIds) {
+        if (!uuidRegex.test(id)) {
+          throw new BadRequestException(`Invalid ARN ID format: ${id}`);
+        }
+      }
+    }
+
+    // Determine types to fetch (single type query run in parallel/sequence for 'ALL')
+    const typesToFetch = type ? [type.toUpperCase()] : ['SIP', 'STP', 'SWP'];
+
+    const arnCondition = hasArnFilter ? 'AND id = ANY($4::uuid[])' : '';
+
+    let statusFilter = '';
+    if (status) {
+      const statusUpper = status.toUpperCase();
+      if (statusUpper === 'CURRENTLY_RUNNING') {
+        statusFilter =
+          'WHERE start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE AND termination_date IS NULL';
+      } else if (statusUpper === 'FORTHCOMING') {
+        statusFilter = 'WHERE start_date > CURRENT_DATE';
+      } else if (statusUpper === 'PREMATURELY_TERMINATED') {
+        statusFilter =
+          'WHERE termination_date IS NOT NULL AND termination_date < end_date';
+      } else if (statusUpper === 'DUE_TO_MATURITY') {
+        statusFilter =
+          'WHERE end_date < CURRENT_DATE AND termination_date IS NULL';
+      }
+    }
+
+    const query = `
+WITH company_arns_filter AS (
+    SELECT id FROM company_arns
+    WHERE company_id = $1::uuid
+      ${arnCondition}
+),
+combined AS (
+    SELECT
+        cd.auto_trno           AS trxn_no,
+        cd.folio_no            AS folio_number,
+        cd.scheme              AS scheme_name,
+        cd.inv_name            AS investor_name,
+        cd.auto_amount         AS amount,
+        cd.from_date           AS start_date,
+        cd.to_date             AS end_date,
+        cd.target_scheme       AS target_scheme,
+        CASE
+            WHEN cd.aut_trntyp = 'SO' THEN 'STP'
+            WHEN cd.aut_trntyp = 'R'  THEN 'SWP'
+            WHEN cd.aut_trntyp = 'P'  THEN 'SIP'
+        END                 AS systematic_type,
+        'CAMS'              AS source,
+        cd.cease_date       AS termination_date
+    FROM cams_sip_stp_details cd
+    WHERE cd.company_arn_id IN (SELECT id FROM company_arns_filter)
+      AND cd.aut_trntyp = $2
+
+    UNION ALL
+
+    SELECT
+        kr.ihno                AS trxn_no,
+        kr.folio_number        AS folio_number,
+        kr.scheme_name         AS scheme_name,
+        kr.investor_name       AS investor_name,
+        kr.amount              AS amount,
+        kr.start_date          AS start_date,
+        kr.end_date            AS end_date,
+        kr.to_scheme_name      AS target_scheme,
+        kr.transaction_type    AS systematic_type,
+        'KARVY'             AS source,
+        kr.terminate_date   AS termination_date
+    FROM karvy_sip_registrations kr
+    WHERE kr.company_arn_id IN (SELECT id FROM company_arns_filter)
+      AND kr.transaction_type = $3
+)
+SELECT DISTINCT ON (trxn_no)
+    *
+FROM combined
+${statusFilter}
+ORDER BY trxn_no;
+    `;
+
+    const allRawRows: any[] = [];
+    for (const t of typesToFetch) {
+      let camsType = '';
+      let karvyType = '';
+      if (t === 'SIP') {
+        camsType = 'P';
+        karvyType = 'SIP';
+      } else if (t === 'STP') {
+        camsType = 'SO';
+        karvyType = 'STP';
+      } else if (t === 'SWP') {
+        camsType = 'R';
+        karvyType = 'SWP';
+      }
+
+      const params: any[] = [companyId, camsType, karvyType];
+      if (hasArnFilter) {
+        params.push(arnIds);
+      }
+
+      const rows = await this.dataSource.query(query, params);
+      allRawRows.push(...rows);
+    }
+
+    // Deduplicate in JS in case of overlapping trxn_no across different types
+    const seen = new Set<string>();
+    const uniqueRows = allRawRows.filter((row) => {
+      const trxnNo = String(row.trxn_no || '');
+      if (seen.has(trxnNo)) {
+        return false;
+      }
+      seen.add(trxnNo);
+      return true;
+    });
+
+    // Sort by trxn_no ascending to preserve database ordering behavior
+    uniqueRows.sort((a, b) => {
+      const valA = String(a.trxn_no || '');
+      const valB = String(b.trxn_no || '');
+      return valA.localeCompare(valB);
+    });
+
+    return uniqueRows.map((r: any) => ({
+      trxn_no: r.trxn_no,
+      folio_number: r.folio_number,
+      scheme_name: r.scheme_name,
+      investor_name: r.investor_name,
+      amount: r.amount ? parseFloat(r.amount) : 0,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      target_scheme: r.target_scheme,
+      systematic_type: r.systematic_type,
+      source: r.source,
+      termination_date: r.termination_date ?? null,
+    }));
   }
 }

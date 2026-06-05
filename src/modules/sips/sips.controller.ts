@@ -1,11 +1,16 @@
 import {
   Controller,
   Get,
+  Post,
+  Body,
   Param,
   Query,
   UseGuards,
   Req,
   BadRequestException,
+  ForbiddenException,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { SipsService } from './sips.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
@@ -42,5 +47,23 @@ export class SipsController {
   @Get('detail/:source/:id')
   async getSipDetail(@Param('source') source: string, @Param('id') id: string) {
     return this.sipsService.getSipDetail(source, id);
+  }
+
+  // 4. Systematic Report: SIP / STP / SWP report with filters (Distributor/Admin Access)
+  @Post('systematic-report')
+  @HttpCode(HttpStatus.OK)
+  async getSystematicReport(@Body() body: any, @Req() req: any) {
+    if (req.user?.type === 'investor') {
+      throw new ForbiddenException('Only distributors can access this endpoint');
+    }
+
+    const { type, status, arnIds } = body;
+    const report = await this.sipsService.getSystematicReport(
+      req.user,
+      type,
+      status,
+      arnIds,
+    );
+    return { success: true, data: report };
   }
 }
