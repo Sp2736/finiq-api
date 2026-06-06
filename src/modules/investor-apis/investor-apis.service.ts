@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Raw } from 'typeorm';
+import { Repository, Raw, DataSource } from 'typeorm';
 import { CamsInvestorTransaction } from 'src/entities/cams-investor-transaction.entity';
 import { KarvyInvestorTransaction } from 'src/entities/karvy-investor-transaction.entity';
 import { KarvySchemeDetail } from 'src/entities/karvy-scheme-detail.entity';
@@ -33,6 +33,7 @@ export class InvestorApisService {
     private readonly camsSipRepo: Repository<CamsSipStpDetail>,
     @InjectRepository(KarvySipRegistration)
     private readonly karvySipRepo: Repository<KarvySipRegistration>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async getPortfolioSummary(investorId: string): Promise<PortfolioSummaryDto> {
@@ -559,5 +560,172 @@ export class InvestorApisService {
       this.logger.error(`Failed to fetch fund holdings: ${error.message}`);
       throw new Error('Could not retrieve fund holdings at this time.');
     }
+  }
+
+  async getInvestorSystematicReports(
+    investorId: string,
+    type?: string,
+    status?: string,
+    registrar?: string,
+  ) {
+    // 1. Validate 'type' parameter
+    if (type && type.toUpperCase() !== 'ALL') {
+      const typeUpper = type.toUpperCase();
+      if (!['SIP', 'STP', 'SWP'].includes(typeUpper)) {
+        throw new BadRequestException('Invalid systematic type');
+      }
+    }
+
+    // 2. Validate 'status' parameter
+    if (status && status.toUpperCase() !== 'ALL') {
+      const statusUpper = status.toUpperCase();
+      if (
+        ![
+          'CURRENTLY_RUNNING',
+          'FORTHCOMING',
+          'PREMATURELY_TERMINATED',
+          'DUE_TO_MATURITY',
+        ].includes(statusUpper)
+      ) {
+        throw new BadRequestException('Invalid status value');
+      }
+    }
+
+    const typesToFetch =
+      type && type.toUpperCase() !== 'ALL'
+        ? [type.toUpperCase()]
+        : ['SIP', 'STP', 'SWP'];
+
+    // 3. Build dynamic WHERE conditions
+    const conditions: string[] = [];
+    if (status && status.toUpperCase() !== 'ALL') {
+      const statusUpper = status.toUpperCase();
+      if (statusUpper === 'CURRENTLY_RUNNING') {
+        conditions.push(
+          `start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE AND termination_date IS NULL`,
+        );
+      } else if (statusUpper === 'FORTHCOMING') {
+        conditions.push(`start_date > CURRENT_DATE`);
+      } else if (statusUpper === 'PREMATURELY_TERMINATED') {
+        conditions.push(
+          `termination_date IS NOT NULL AND termination_date < end_date`,
+        );
+      } else if (statusUpper === 'DUE_TO_MATURITY') {
+        conditions.push(`end_date < CURRENT_DATE AND termination_date IS NULL`);
+      }
+    }
+
+    if (registrar && registrar.toUpperCase() !== 'ALL') {
+      conditions.push(`source = '${registrar.toUpperCase()}'`);
+    }
+
+    const statusFilter =
+      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const query = `
+      WITH combined AS (
+          -- CAMS Active SIPs
+          SELECT
+              cd.auto_trno           AS trxn_no,
+              cd.folio_no            AS folio_number,
+              cd.scheme              AS scheme_name,
+              cd.inv_name            AS investor_name,
+              cd.auto_amount         AS amount,
+              cd.from_date           AS start_date,
+              cd.to_date             AS end_date,
+              cd.target_scheme       AS target_scheme,
+              CASE
+                  WHEN cd.aut_trntyp = 'SO' THEN 'STP'
+                  WHEN cd.aut_trntyp = 'R'  THEN 'SWP'
+                  WHEN cd.aut_trntyp = 'P'  THEN 'SIP'
+              END                 AS systematic_type,
+              'CAMS'              AS source,
+              cd.cease_date       AS termination_date,
+              cd.amc_code         AS amc_code,
+              CONCAT(cd.amc_code, cd.scheme_code) AS product_code
+          FROM cams_sip_stp_details cd
+          JOIN cams_investor_static_details cs
+            ON cs.foliochk = cd.folio_no
+            AND cs.product = CONCAT(cd.amc_code, cd.scheme_code)
+          WHERE cs.investor_id = $1::uuid
+            AND cd.aut_trntyp = $2
+
+          UNION ALL
+
+          -- KARVY Active SIPs
+          SELECT
+              kr.ihno                AS trxn_no,
+              kr.folio_number        AS folio_number,
+              kr.scheme_name         AS scheme_name,
+              COALESCE(kr.investor_name, km.investor_name) AS investor_name,
+              kr.amount              AS amount,
+              kr.start_date          AS start_date,
+              kr.end_date            AS end_date,
+              kr.to_scheme_name      AS target_scheme,
+              kr.transaction_type    AS systematic_type,
+              'KARVY'             AS source,
+              kr.terminate_date   AS termination_date,
+              NULL                AS amc_code,
+              kr.product_code     AS product_code
+          FROM karvy_sip_registrations kr
+          JOIN karvy_investor_master_data km
+            ON km.folio = kr.folio_number
+            AND km.product_code = kr.product_code
+          WHERE km.investor_id = $1::uuid
+            AND kr.transaction_type = $3
+      )
+      SELECT DISTINCT ON (trxn_no) *
+      FROM combined
+      ${statusFilter}
+      ORDER BY trxn_no;
+    `;
+
+    const allRawRows: any[] = [];
+    for (const t of typesToFetch) {
+      let camsType = '';
+      let karvyType = '';
+      if (t === 'SIP') {
+        camsType = 'P';
+        karvyType = 'SIP';
+      } else if (t === 'STP') {
+        camsType = 'SO';
+        karvyType = 'STP';
+      } else if (t === 'SWP') {
+        camsType = 'R';
+        karvyType = 'SWP';
+      }
+
+      const params: any[] = [investorId, camsType, karvyType];
+      const rows = await this.dataSource.query(query, params);
+      allRawRows.push(...rows);
+    }
+
+    const seen = new Set<string>();
+    const uniqueRows = allRawRows.filter((row) => {
+      const trxnNo = String(row.trxn_no || '');
+      if (seen.has(trxnNo)) return false;
+      seen.add(trxnNo);
+      return true;
+    });
+
+    uniqueRows.sort((a, b) =>
+      String(a.trxn_no || '').localeCompare(String(b.trxn_no || '')),
+    );
+
+    return uniqueRows.map((r: any) => ({
+      trxn_no: r.trxn_no,
+      folio_number: r.folio_number,
+      scheme_name: r.scheme_name,
+      investor_name: r.investor_name,
+      amount: r.amount ? parseFloat(r.amount) : 0,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      target_scheme: r.target_scheme,
+      systematic_type: r.systematic_type,
+      source: r.source,
+      termination_date: r.termination_date ?? null,
+      amc_code: r.amc_code,
+      product_code: r.product_code,
+    }));
   }
 }

@@ -224,6 +224,7 @@ export class SipsService {
     type?: string,
     status?: string,
     arnIds?: string[],
+    registrar?: string, // <-- Added registrar parameter
   ) {
     const companyId =
       user?.roles?.find((r: any) => r.company_id)?.company_id ||
@@ -290,6 +291,18 @@ export class SipsService {
       }
     }
 
+    // 4. Registrar Filtering
+    let camsCondition = '';
+    let karvyCondition = '';
+    if (registrar) {
+      const regUpper = registrar.toUpperCase();
+      if (regUpper === 'CAMS') {
+        karvyCondition = 'AND 1=0';
+      } else if (regUpper === 'KARVY') {
+        camsCondition = 'AND 1=0';
+      }
+    }
+
     const query = `
 WITH company_arns_filter AS (
     SELECT id FROM company_arns
@@ -312,10 +325,12 @@ combined AS (
             WHEN cd.aut_trntyp = 'P'  THEN 'SIP'
         END                 AS systematic_type,
         'CAMS'              AS source,
-        cd.cease_date       AS termination_date
+        cd.cease_date       AS termination_date,
+        cd.amc_code         AS amc_code
     FROM cams_sip_stp_details cd
     WHERE cd.company_arn_id IN (SELECT id FROM company_arns_filter)
       AND cd.aut_trntyp = $2
+      ${camsCondition}
 
     UNION ALL
 
@@ -330,10 +345,12 @@ combined AS (
         kr.to_scheme_name      AS target_scheme,
         kr.transaction_type    AS systematic_type,
         'KARVY'             AS source,
-        kr.terminate_date   AS termination_date
+        kr.terminate_date   AS termination_date,
+        kr.fund_code        AS amc_code
     FROM karvy_sip_registrations kr
     WHERE kr.company_arn_id IN (SELECT id FROM company_arns_filter)
       AND kr.transaction_type = $3
+      ${karvyCondition}
 )
 SELECT DISTINCT ON (trxn_no)
     *
@@ -396,6 +413,7 @@ ORDER BY trxn_no;
       systematic_type: r.systematic_type,
       source: r.source,
       termination_date: r.termination_date ?? null,
+      amc_code: r.amc_code || 'Unknown',
     }));
   }
 }

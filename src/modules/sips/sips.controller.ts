@@ -54,15 +54,18 @@ export class SipsController {
   @HttpCode(HttpStatus.OK)
   async getSystematicReport(@Body() body: any, @Req() req: any) {
     if (req.user?.type === 'investor') {
-      throw new ForbiddenException('Only distributors can access this endpoint');
+      throw new ForbiddenException(
+        'Only distributors can access this endpoint',
+      );
     }
 
-    const { type, status, arnIds } = body;
+    const { type, status, arnIds, registrar } = body;
     const report = await this.sipsService.getSystematicReport(
       req.user,
       type,
       status,
       arnIds,
+      registrar,
     );
     return { success: true, data: report };
   }
