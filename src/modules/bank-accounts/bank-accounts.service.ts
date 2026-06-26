@@ -1,10 +1,22 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { CreateBankAccountDto } from './dto/create-bank-account.dto';
+import { BankAccount } from '../../entities/bank-account.entity';
+import { InjectRepository } from '@nestjs/typeorm';
 
 @Injectable()
 export class BankAccountsService {
   // Utilizing your existing TypeORM DataSource for secure database connections
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @InjectRepository(BankAccount)
+    private readonly bankAccountRepository: Repository<BankAccount>,
+  ) {}
+
+  async create(createDto: CreateBankAccountDto) {
+    const newAccount = this.bankAccountRepository.create(createDto);
+    return await this.bankAccountRepository.save(newAccount);
+  }
 
   async getBankAccounts(subBrokerId?: string) {
     try {

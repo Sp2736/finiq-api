@@ -1,47 +1,50 @@
 import {
-    Entity,
-    PrimaryGeneratedColumn,
-    Column,
-    CreateDateColumn,
-    UpdateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 
 export enum UserStatus {
-    ACTIVE = 'ACTIVE',
-    PENDING = 'PENDING',
-    BLOCKED = 'BLOCKED',
+  ACTIVE = 'ACTIVE',
+  PENDING = 'PENDING',
+  BLOCKED = 'BLOCKED',
 }
 
 @Entity('users')
 export class User {
-    @PrimaryGeneratedColumn('uuid')
-    id: string;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
-    @Column({ nullable: true })
-    phone_number: string;
+  @Column({ nullable: true })
+  phone_number: string;
 
-    @Column()
-    is_verified: boolean;
+  @Column()
+  is_verified: boolean;
 
-    @Column({
-        type: 'enum',
-        enum: UserStatus,
-        default: UserStatus.PENDING,
-    })
-    status: UserStatus;
+  @Column({ nullable: true })
+  company_id: string;
 
-    @Column({ type: 'timestamp with time zone', nullable: true })
-    last_login: Date;
+  @Column({
+    type: 'enum',
+    enum: UserStatus,
+    default: UserStatus.PENDING,
+  })
+  status: UserStatus;
 
-    @Column({ type: 'varchar', nullable: true, select: false })
-    refresh_token: string;
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  last_login: Date;
 
-    @Column({ type: 'timestamp with time zone', nullable: true })
-    refresh_token_expires_at: Date;
+  @Column({ type: 'varchar', nullable: true, select: false })
+  refresh_token: string;
 
-    @CreateDateColumn({ type: 'timestamp with time zone' })
-    created_at: Date;
+  @Column({ type: 'timestamp with time zone', nullable: true })
+  refresh_token_expires_at: Date;
 
-    @UpdateDateColumn({ type: 'timestamp with time zone' })
-    updated_at: Date;
+  @CreateDateColumn({ type: 'timestamp with time zone' })
+  created_at: Date;
+
+  @UpdateDateColumn({ type: 'timestamp with time zone' })
+  updated_at: Date;
 }

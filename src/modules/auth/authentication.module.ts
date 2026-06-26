@@ -10,22 +10,23 @@ import { JwtStrategy } from './jwt.strategy';
 import { OtpLog } from 'src/entities/otp-log.entity';
 import { User } from 'src/entities/user.entity';
 import { UserProfile } from 'src/entities/user-profile.entity';
+import { CompanyDetail } from '../../entities';
 
 @Module({
-    imports: [
-        TypeOrmModule.forFeature([OtpLog, User, UserProfile]),
-        PassportModule,
-        JwtModule.registerAsync({
-            imports: [ConfigModule],
-            inject: [ConfigService],
-            useFactory: async (configService: ConfigService) => ({
-                secret: configService.get<string>('JWT_SECRET') || 'secret',
-                signOptions: { expiresIn: '1h' },
-            }),
-        }),
-    ],
-    controllers: [AuthenticationController],
-    providers: [AuthenticationService, AuthenticationRepository, JwtStrategy],
-    exports: [AuthenticationService, AuthenticationRepository],
+  imports: [
+    TypeOrmModule.forFeature([OtpLog, User, CompanyDetail, UserProfile]),
+    PassportModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET') || 'secret',
+        signOptions: { expiresIn: '1h' },
+      }),
+    }),
+  ],
+  controllers: [AuthenticationController],
+  providers: [AuthenticationService, AuthenticationRepository, JwtStrategy],
+  exports: [AuthenticationService, AuthenticationRepository],
 })
-export class AuthenticationModule { }
+export class AuthenticationModule {}
