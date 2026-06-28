@@ -191,13 +191,19 @@ export class AuthenticationService {
     //   user.company_id,
     // );
 
-    // Safety check: only attempt to fetch the logo if company_id exists
+    // Use company_id from the user's profile (from user_profiles table) — most reliable source.
+    // Falls back to user.company_id (now a real DB column after entity fix).
+    const companyIdForLogo =
+      roles.find((r) => r.company_id)?.company_id ?? user.company_id ?? null;
+
     let logo_base64: string | null = null;
-    if (user.company_id) {
-      const companyDetail = await this.repository.findCompanyDetail(
-        user.company_id,
-      );
-      logo_base64 = companyDetail?.logo_base64 || null;
+    if (companyIdForLogo) {
+      try {
+        const companyDetail = await this.repository.findCompanyDetail(companyIdForLogo);
+        logo_base64 = companyDetail?.logo_base64 || null;
+      } catch (err) {
+        this.logger.warn(`Could not fetch company logo for ${companyIdForLogo}: ${err}`);
+      }
     }
 
     await this.repository.saveRefreshToken(

@@ -23,13 +23,19 @@ export class ThemesController {
   constructor(private readonly themesService: ThemesService) {}
 
   private getCompanyId(req: any): string {
-    const companyId =
-      req.user?.company_id ||
+    // Priority 1: Extract from roles[] (real company_id from user_profiles table)
+    // This is reliable for staff users in multi-tenant setups.
+    const companyIdFromRoles =
       req.user?.roles?.find((r: any) => r.company_id)?.company_id;
+
+    // Priority 2: Top-level claim (reliable for investors; hardcoded fallback for staff)
+    const companyIdDirect = req.user?.company_id;
+
+    const companyId = companyIdFromRoles || companyIdDirect;
 
     if (!companyId) {
       throw new Error(
-        `Could not extract company_id from token. User type: ${req.user?.type}, id: ${req.user?.id}`,
+        `Cannot resolve company_id. type=${req.user?.type}, id=${req.user?.id}`,
       );
     }
     return companyId;

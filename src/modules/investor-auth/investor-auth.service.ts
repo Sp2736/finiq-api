@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { AuthenticationRepository } from '../auth/authentication.repository'; // Reusing OTP logic
 import { Investor } from 'src/entities/investor.entity';
 import {
@@ -31,6 +32,7 @@ export class InvestorAuthService {
     @InjectRepository(Investor)
     private readonly investorRepo: Repository<Investor>,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
 
   async sendOtp(dto: SendInvestorOtpDto) {
@@ -39,8 +41,6 @@ export class InvestorAuthService {
     // Find investor by mobile
     const investor = await this.investorRepo.findOne({ where: { mobile } });
     if (!investor) {
-      // Should we block non-existent investors?
-      // "use investors table as master table" implies only existing investors can login.
       throw new NotFoundException('Investor not found');
     }
 
@@ -59,16 +59,18 @@ export class InvestorAuthService {
   async login(dto: LoginInvestorDto) {
     const { identifier, password } = dto;
 
-    const investor = await this.investorRepo.findOne({
-      where: [{ username: identifier }, { email: identifier }],
-      relations: ['company', 'company.details'],
-    });
+    // Load investor with relations AND the normally-excluded password_hash column
+    const investor = await this.investorRepo
+      .createQueryBuilder('investor')
+      .addSelect('investor.password_hash')
+      .leftJoinAndSelect('investor.company', 'company')
+      .leftJoinAndSelect('company.details', 'details')
+      .where('investor.username = :id OR investor.email = :id', { id: identifier })
+      .getOne();
 
     if (!investor) {
       throw new UnauthorizedException('Invalid credentials');
     }
-
-    console.log(identifier);
 
     if (!investor.password_hash) {
       throw new UnauthorizedException(
@@ -76,16 +78,16 @@ export class InvestorAuthService {
       );
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      password,
-      investor.password_hash,
-    );
+    const isPasswordValid = await bcrypt.compare(password, investor.password_hash);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Generate Token
-    // Payload: { investor_id: uuid }
+    return this.generateInvestorAuthResponse(investor);
+  }
+
+  // ── Private helper ─────────────────────────────────────────────────────────
+  private async generateInvestorAuthResponse(investor: any) {
     const payload = {
       investor_id: investor.id,
       mobile: investor.mobile,
@@ -94,9 +96,8 @@ export class InvestorAuthService {
       company_id: investor.company_id,
     };
 
-    // Get logo from the relation we loaded
-    const logo_base64 = investor.company?.details?.logo_base64 || null;
     const accessToken = this.jwtService.sign(payload);
+    const logo_base64 = investor.company?.details?.logo_base64 || null;
 
     return {
       access_token: accessToken,

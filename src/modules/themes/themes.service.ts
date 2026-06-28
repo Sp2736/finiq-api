@@ -11,27 +11,15 @@ export class ThemesService implements OnModuleInit {
    */
   async onModuleInit() {
     try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS company_themes (
-          company_id      TEXT PRIMARY KEY,
-          theme_name      TEXT NOT NULL DEFAULT 'System Default',
-          theme_variables JSONB NOT NULL DEFAULT '{}'::jsonb,
-          active_theme_id TEXT DEFAULT NULL,
-          saved_themes    JSONB NOT NULL DEFAULT '{}'::jsonb,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-
-      /* Add active_theme_id column if it was missing from an older table */
+      // The company_themes table already exists in production (schema-managed).
+      // We only ensure the active_theme_id column exists — safe to run every startup.
       await db.query(`
         ALTER TABLE company_themes
         ADD COLUMN IF NOT EXISTS active_theme_id TEXT DEFAULT NULL
       `);
-
-      console.log('[ThemesService] company_themes table ready.');
+      console.log('[ThemesService] company_themes schema verified.');
     } catch (err) {
-      console.error('[ThemesService] Failed to auto-migrate company_themes:', err);
+      console.error('[ThemesService] Migration error:', err);
     }
   }
 
@@ -143,9 +131,11 @@ export class ThemesService implements OnModuleInit {
   async deleteSavedTheme(companyId: string, themeId: string) {
     const query = `
       UPDATE company_themes
-      SET 
+      SET
         saved_themes    = saved_themes - $2::text,
-        active_theme_id = CASE WHEN active_theme_id = $2 THEN NULL ELSE active_theme_id END,
+        active_theme_id = CASE WHEN active_theme_id = $2 THEN NULL         ELSE active_theme_id  END,
+        theme_variables = CASE WHEN active_theme_id = $2 THEN '{}'::jsonb  ELSE theme_variables   END,
+        theme_name      = CASE WHEN active_theme_id = $2 THEN 'System Default' ELSE theme_name   END,
         updated_at      = CURRENT_TIMESTAMP
       WHERE company_id = $1
     `;

@@ -11,6 +11,7 @@ import { Investor } from 'src/entities/investor.entity';
     imports: [
         TypeOrmModule.forFeature([Investor]),
         AuthenticationModule, // Import to use AuthenticationRepository
+        ConfigModule,         // Required for ConfigService injection in InvestorAuthService
         JwtModule.registerAsync({
             imports: [ConfigModule],
             inject: [ConfigService],

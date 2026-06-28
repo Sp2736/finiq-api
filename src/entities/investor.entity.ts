@@ -55,7 +55,7 @@ export class Investor {
     @Column({ name: 'username', type: 'varchar', nullable: true, length: 100 })
     username?: string | null;
 
-    @Column({ name: 'password_hash', type: 'varchar', nullable: true, length: 255 })
+    @Column({ name: 'password_hash', type: 'varchar', nullable: true, length: 255, select: false })
     password_hash?: string | null;
 
     @Column({ name: 'must_change_password', type: 'boolean', default: false })
