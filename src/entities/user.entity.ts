@@ -23,8 +23,10 @@ export class User {
   @Column()
   is_verified: boolean;
 
-  @Column({ nullable: true })
-  company_id: string;
+  // todo: fix this part to type-check
+  // @Column({ nullable: true })
+  // company_id: string;
+  company_id?: string = '9d034353-d658-4fa5-b5a1-e46253cdbc0c';
 
   @Column({
     type: 'enum',

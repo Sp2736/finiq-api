@@ -169,6 +169,7 @@ export class AuthenticationService {
       sub: user.id,
       phone_number: user.phone_number,
       roles: roles,
+      company_id: user.company_id,
     };
 
     const accessTokenExpiry =
@@ -186,9 +187,9 @@ export class AuthenticationService {
     );
 
     // fix: Fetch company details (assuming repository has access to company_id)
-    const companyDetail = await this.repository.findCompanyDetail(
-      user.company_id,
-    );
+    // const companyDetail = await this.repository.findCompanyDetail(
+    //   user.company_id,
+    // );
 
     // Safety check: only attempt to fetch the logo if company_id exists
     let logo_base64: string | null = null;

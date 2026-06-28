@@ -18,6 +18,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             return {
                 id: payload.investor_id,
                 mobile: payload.mobile,
+                company_id: payload.company_id,
                 type: 'investor'
             };
         }
@@ -25,6 +26,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             id: payload.sub,
             phone_number: payload.phone_number,
             roles: payload.roles,
+            company_id: payload.company_id,
             type: 'user'
         };
     }

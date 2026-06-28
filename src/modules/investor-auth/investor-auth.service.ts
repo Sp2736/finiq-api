@@ -91,6 +91,7 @@ export class InvestorAuthService {
       mobile: investor.mobile,
       username: investor.username,
       email: investor.email,
+      company_id: investor.company_id,
     };
 
     // Get logo from the relation we loaded

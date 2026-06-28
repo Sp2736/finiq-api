@@ -32,10 +32,10 @@ import { BullModule } from '@nestjs/bull';
 import { BrokerTransactionsModule } from './modules/broker-transactions/broker-transactions.module';
 import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module';
 import { SipsModule } from './modules/sips/sips.module';
+import { ThemesModule } from './modules/themes/themes.module';
 
 @Module({
   imports: [
-
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -80,9 +80,10 @@ import { SipsModule } from './modules/sips/sips.module';
     BrokerTransactionsModule,
     BankAccountsModule,
     SipsModule,
+    ThemesModule,
   ],
 
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}
