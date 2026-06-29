@@ -1,10 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus, Logger, UseGuards, Req, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus, Logger, UseGuards, Req, ForbiddenException, BadRequestException, Res } from '@nestjs/common';
 import { InvestorService } from './investors.service';
 import { InvestorQueryDto, GenerateCredentialsDto } from './dtos';
 import { InvestorsHoldingsService } from './investors-holdings.service';
 import { ResponseFormatter } from 'src/common';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { UserRole } from 'src/entities/user-profile.entity';
+import { InvestorsExportService } from './investors-export.service';
+import type { Response } from 'express';
 
 /**
  * Investor Controller - REST endpoints for investor operations
@@ -16,6 +18,7 @@ export class InvestorController {
   constructor(
     private investorService: InvestorService,
     private holdingsService: InvestorsHoldingsService,
+    private investorsExportService: InvestorsExportService,
   ) { }
 
   /**
@@ -293,6 +296,34 @@ export class InvestorController {
 
     const gains = await this.holdingsService.getCapitalGainsReport(targetInvestorId, start_date, end_date);
     return ResponseFormatter.success(gains, 'Capital gains retrieved successfully');
+  }
+
+  /**
+   * POST /api/investors/holdings-export
+   * Generate PDF export for investor's portfolio holdings
+   */
+  @Post('holdings-export')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async exportHoldings(
+    @Body() body: { clientData: any, distributorInfo: any },
+    @Res() res: Response
+  ) {
+    const { clientData, distributorInfo } = body;
+    
+    // The UI handles fetching the correct user data via getHoldingsReport,
+    // so we just pipe that JSON data right into the PDF generator.
+    const buffer = await this.investorsExportService.generatePortfolioValuationPDF(clientData, distributorInfo);
+    
+    // Title Case formatting for filename
+    const rawName = clientData.investor_name || clientData.clientName || 'Investor';
+    const investorNameFormatted = rawName.toLowerCase().split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join('_').replace(/[^a-zA-Z0-9_]/gi, '');
+    const today = new Date().toLocaleDateString('en-GB').replace(/\//g, '_');
+    const filename = `${investorNameFormatted}_Holdings_${today}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 
   /**
