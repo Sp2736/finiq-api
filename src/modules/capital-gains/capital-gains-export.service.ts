@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { CapitalGainsService } from './capital-gains.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN TOKENS (Navy / Steel-Blue / White palette)
@@ -52,20 +53,101 @@ const toTitleCase = (str: string): string => {
 
 @Injectable()
 export class CapitalGainsExportService {
+  constructor(
+    private readonly capitalGainsService: CapitalGainsService,
+  ) {}
+  
   public async exportCapitalGains(
     format: 'pdf' | 'excel',
-    data: any,
-    fy: string,
-    distributorInfo: any,
+    investor_id: string,
+    from_date: string,
+    to_date: string,
+    distributorInfo?: any,
   ): Promise<Buffer> {
+    const rawData = await this.capitalGainsService.getCapitalGains(investor_id, from_date, to_date);
+    const data: any = this.mapData(rawData);
+    
+    // Fallback if distributor info is not provided but needed by export templates
+    if (distributorInfo) {
+      data.distributorInfo = distributorInfo;
+    }
+
     if (format === 'excel') {
-      return await this.generateExcel(data, fy);
+      return await this.generateExcel(data, from_date, to_date);
     } else {
-      return this.generatePDF(data, fy, distributorInfo);
+      return this.generatePDF(data, from_date, to_date);
     }
   }
 
-  private async generateExcel(data: any, fy: string): Promise<Buffer> {
+  private mapData(rawData: any) {
+    const backendData = rawData?.gains_data || [];
+    const invName = rawData?.investor_name || 'Investor';
+
+    const mapped = {
+      investorDetails: {
+        name: invName,
+        pan: 'N/A',
+        address: 'Address Not Provided',
+        mobile: 'N/A',
+        email: 'N/A',
+      },
+      mutualFunds: [] as any[],
+      capitalGainSummary: { shortTerm: 0, longTerm: 0, total: 0 },
+    };
+
+    const fundsMap = new Map<string, any>();
+
+    backendData.forEach((group: any) => {
+      const fundName = group.scheme_name || 'Unknown Fund';
+      const folioNo = group.folio_number || 'N/A';
+      const isin = group.isin_no || 'N/A';
+      const key = `${fundName}__${folioNo}`;
+      
+      if (!fundsMap.has(key)) {
+        fundsMap.set(key, {
+          fundName: fundName,
+          folioNo: folioNo,
+          amfiCode: 'N/A',
+          isin: isin,
+          // Since the DB already grouped them, we just assume Equity unless we can parse it from scheme_name
+          assetClass: String(fundName).toLowerCase().includes('debt') ? 'Debt' : 'Equity',
+          transactions: [],
+        });
+      }
+
+      group.transactions.forEach((tx: any) => {
+        const stPL = Number(tx.short_term_pl ?? tx.stcg ?? 0);
+        const ltPL = Number(tx.long_term_pl ?? tx.ltcg ?? 0);
+
+        mapped.capitalGainSummary.shortTerm += stPL;
+        mapped.capitalGainSummary.longTerm += ltPL;
+        mapped.capitalGainSummary.total += stPL + ltPL;
+
+        fundsMap.get(key)!.transactions.push({
+          sellDate: tx.sell_date,
+          holdingDays: tx.holding_days,
+          transactionType: tx.selling_transaction_type || 'Redemption',
+          units: tx.units_qty ?? tx.units ?? 0,
+          sellNav: tx.sell_nav || 0,
+          sellAmount: tx.sell_amount || 0,
+          sttAndOthers: tx.stt_and_others || 0,
+          tdsAndOthers: tx.tds_and_others || 0,
+          purchaseDate: tx.purchase_date || 'N/A',
+          purchaseNav: tx.purchase_nav || 0,
+          netPurchaseAmount: tx.net_purchase_amount ?? tx.purchase_amount ?? 0,
+          stampDuty: tx.stamp_duty || 0,
+          costAcquisition: tx.cost_of_acquisition || 0,
+          shortTermPL: stPL,
+          longTermPL: ltPL,
+        });
+      });
+    });
+
+    mapped.mutualFunds = Array.from(fundsMap.values());
+    return mapped;
+  }
+
+  private async generateExcel(data: any, from_date:string, to_date:string): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
     const inv = data.investorDetails;
     const investorNameFormatted = toTitleCase(inv.name);
@@ -142,7 +224,7 @@ export class CapitalGainsExportService {
         alignment: { horizontal: 'right' },
       });
 
-      const reportMeta = `FY: ${fy.replace('-', ' – ')}  |  Generated: ${new Date().toLocaleDateString('en-GB')}`;
+      const reportMeta = `FY: ${from_date} to ${to_date}   |  Generated: ${new Date().toLocaleDateString('en-GB')}`;
       const r2 = ws.addRow([reportMeta]).number;
       ws.mergeCells(r2, 1, r2, 15);
       applyStyle(r2, 1, r2, 15, {
@@ -601,7 +683,7 @@ export class CapitalGainsExportService {
         ws.addRow([]);
 
         const rTax1 = ws.addRow([
-          `Mutual Funds Other Taxes Details — FY ${fy.replace('-', ' – ')}`,
+          `Mutual Funds Other Taxes Details — FY ${from_date} to ${to_date}`,
         ]).number;
         ws.mergeCells(rTax1, 1, rTax1, 13);
         applyStyle(rTax1, 1, rTax1, 13, {
@@ -770,7 +852,7 @@ export class CapitalGainsExportService {
     return Buffer.from(arrayBuffer);
   }
 
-  private generatePDF(data: any, fy: string, distributorInfo: any): Buffer {
+  private generatePDF(data: any, from_date:string, to_date:string): Buffer {
     const doc = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',
@@ -797,10 +879,17 @@ export class CapitalGainsExportService {
 
     const drawHeader = () => {
       const HEADER_H = 22;
-      if (distributorInfo && distributorInfo.logoBase64) {
-        doc.addImage(distributorInfo.logoBase64, 'PNG', ML, 5, 24, 16);
+      if (data.distributorInfo && data.distributorInfo.logoBase64) {
+        let logoData = data.distributorInfo.logoBase64;
+        if (!logoData.startsWith('data:image')) {
+          logoData = `data:image/png;base64,${logoData}`;
+        }
+        try {
+          doc.addImage(logoData, 'PNG', ML, 5, 32, 16);
+        } catch (err) {
+          console.warn('Could not render distributor logo:', err);
+        }
       }
-
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(...C.navy);
@@ -809,7 +898,7 @@ export class CapitalGainsExportService {
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(...C.textMuted);
-      const reportMeta = `FY: ${fy.replace('-', ' – ')}  |  Generated: ${new Date().toLocaleDateString('en-GB')}`;
+      const reportMeta = `FY: ${from_date} to ${to_date} |  Generated: ${new Date().toLocaleDateString('en-GB')}`;
       doc.text(reportMeta, PW - MR, 17, { align: 'right' });
 
       doc.setDrawColor(...C.border);
@@ -1225,7 +1314,7 @@ export class CapitalGainsExportService {
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(...C.white);
       doc.text(
-        `Mutual Funds Other Taxes Details — FY ${fy.replace('-', ' – ')}`,
+        `Mutual Funds Other Taxes Details — FY ${from_date} to ${to_date}`,
         ML + 4,
         Y + 5.5,
       );

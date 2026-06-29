@@ -21,6 +21,7 @@ import { InvestorService } from './investors.service';
 import { InvestorRepository } from './investors.repository';
 import { InvestorsHoldingsService } from './investors-holdings.service';
 import { InvestorsExportService } from './investors-export.service';
+import { TransactionsExportService } from './transactions-export.service';
 
 /**
  * Investor Module - Handles all investor-related operations
@@ -50,6 +51,7 @@ import { InvestorsExportService } from './investors-export.service';
     InvestorRepository,
     InvestorsHoldingsService,
     InvestorsExportService,
+    TransactionsExportService,
   ],
   exports: [InvestorService, InvestorRepository, InvestorsHoldingsService],
 })

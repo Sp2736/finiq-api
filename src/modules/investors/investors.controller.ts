@@ -1,4 +1,19 @@
-import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus, Logger, UseGuards, Req, ForbiddenException, BadRequestException, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  HttpCode,
+  HttpStatus,
+  Logger,
+  UseGuards,
+  Req,
+  ForbiddenException,
+  BadRequestException,
+  Res,
+} from '@nestjs/common';
 import { InvestorService } from './investors.service';
 import { InvestorQueryDto, GenerateCredentialsDto } from './dtos';
 import { InvestorsHoldingsService } from './investors-holdings.service';
@@ -6,6 +21,7 @@ import { ResponseFormatter } from 'src/common';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { UserRole } from 'src/entities/user-profile.entity';
 import { InvestorsExportService } from './investors-export.service';
+import { TransactionsExportService } from './transactions-export.service';
 import type { Response } from 'express';
 
 /**
@@ -19,7 +35,8 @@ export class InvestorController {
     private investorService: InvestorService,
     private holdingsService: InvestorsHoldingsService,
     private investorsExportService: InvestorsExportService,
-  ) { }
+    private transactionsExportService: TransactionsExportService,
+  ) {}
 
   /**
    * GET /api/investors
@@ -28,7 +45,9 @@ export class InvestorController {
   @Get()
   @HttpCode(HttpStatus.OK)
   async findAll(@Query() query: InvestorQueryDto) {
-    this.logger.debug(`Fetching investors - page: ${query.page}, limit: ${query.limit}`);
+    this.logger.debug(
+      `Fetching investors - page: ${query.page}, limit: ${query.limit}`,
+    );
     const result = await this.investorService.findAll(query.page, query.limit);
     return ResponseFormatter.paginated(
       result?.data || [],
@@ -50,10 +69,15 @@ export class InvestorController {
     @Query('limit') limit: number = 10,
   ) {
     if (!searchTerm) {
-      return ResponseFormatter.error('Search term is required', 'SEARCH_TERM_REQUIRED');
+      return ResponseFormatter.error(
+        'Search term is required',
+        'SEARCH_TERM_REQUIRED',
+      );
     }
 
-    this.logger.debug(`Searching investors - term: ${searchTerm}, page: ${page}`);
+    this.logger.debug(
+      `Searching investors - term: ${searchTerm}, page: ${page}`,
+    );
     const result = await this.investorService.search(searchTerm, page, limit);
     return ResponseFormatter.paginated(
       result?.data || [],
@@ -75,8 +99,13 @@ export class InvestorController {
     if (userSnapshot.type !== 'investor') {
       throw new ForbiddenException('You can only view your own holdings');
     }
-    const investorHoldings = await this.holdingsService.getHoldingsReport(userSnapshot.id);
-    return ResponseFormatter.success(investorHoldings, 'Investor holdings retrieved successfully');
+    const investorHoldings = await this.holdingsService.getHoldingsReport(
+      userSnapshot.id,
+    );
+    return ResponseFormatter.success(
+      investorHoldings,
+      'Investor holdings retrieved successfully',
+    );
   }
 
   /**
@@ -88,7 +117,92 @@ export class InvestorController {
   async findById(@Param('id') id: string) {
     this.logger.debug(`Fetching investor - id: ${id}`);
     const investor = await this.investorService.findById(id);
-    return ResponseFormatter.success(investor, 'Investor retrieved successfully');
+    return ResponseFormatter.success(
+      investor,
+      'Investor retrieved successfully',
+    );
+  }
+
+  /**
+   * GET /api/investors/:id/transactions/export
+   * Generate PDF export for investor's transactions
+   */
+  @Post(':id/transactions/export')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async exportTransactions(
+    @Param('id') investorId: string,
+    @Body('distributor_info') distributorInfo: any,
+    @Req() req: any,
+    @Res() res: any,
+  ) {
+    const userSnapshot = req.user;
+    let targetInvestorId = investorId;
+
+    if (userSnapshot.type === 'investor') {
+      if (investorId && investorId !== userSnapshot.id) {
+        throw new ForbiddenException('You can only view your own transactions');
+      }
+      targetInvestorId = userSnapshot.id;
+    } else {
+      if (!targetInvestorId) {
+        throw new BadRequestException('investor_id is required in the path for admins');
+      }
+      if (!userSnapshot.roles) {
+        throw new ForbiddenException('User roles not found');
+      }
+      const isAdmin = userSnapshot.roles.some((r: any) =>
+        [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+      );
+      if (!isAdmin) {
+        const brokerProfiles = userSnapshot.roles.filter((r: any) =>
+          [UserRole.BROKER, UserRole.SUB_BROKER].includes(r.role),
+        );
+        if (brokerProfiles.length === 0) {
+          throw new ForbiddenException('You do not have permission to view transactions');
+        }
+        let hasAccess = false;
+        for (const profile of brokerProfiles) {
+          if (await this.investorService.checkBrokerAccess(profile.id, targetInvestorId)) {
+            hasAccess = true;
+            break;
+          }
+        }
+        if (!hasAccess) {
+          throw new ForbiddenException('You do not have access to this investor transactions');
+        }
+      }
+    }
+
+    const txnData = await this.holdingsService.getTransactionReport(targetInvestorId);
+
+    // Generate the PDF buffer via the new service
+    const buffer = await this.transactionsExportService.generatePDF(
+      txnData,
+      distributorInfo,
+    );
+
+    // Fallback file name formatting
+    const rawData = txnData as any;
+    const rawName = Array.isArray(rawData)
+      ? rawData[0]?.investor_name || 'Investor'
+      : rawData?.investor_name ||
+        rawData?.clientName ||
+        rawData?.investorDetails?.name ||
+        'Investor';
+    const investorNameFormatted = rawName
+      .toLowerCase()
+      .split(' ')
+      .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join('_')
+      .replace(/[^a-zA-Z0-9_]/gi, '');
+
+    const today = new Date().toLocaleDateString('en-GB').replace(/\//g, '_');
+    const filename = `${investorNameFormatted}_Transactions_${today}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 
   /**
@@ -112,7 +226,10 @@ export class InvestorController {
   async findByPan(@Param('pan') pan: string) {
     this.logger.debug(`Fetching investor - PAN: ${pan}`);
     const investor = await this.investorService.findByPan(pan);
-    return ResponseFormatter.success(investor, 'Investor retrieved successfully');
+    return ResponseFormatter.success(
+      investor,
+      'Investor retrieved successfully',
+    );
   }
 
   /**
@@ -143,7 +260,10 @@ export class InvestorController {
         throw new ForbiddenException('You can only view your own holdings');
       }
       const investorHoldings = await this.holdingsService.getHoldingsReport(id);
-      return ResponseFormatter.success(investorHoldings, 'Holdings retrieved successfully');
+      return ResponseFormatter.success(
+        investorHoldings,
+        'Holdings retrieved successfully',
+      );
     }
 
     // 2. If requester is an internal user (Admin/Broker)
@@ -153,7 +273,11 @@ export class InvestorController {
 
     // Check if user is Admin
     const isAdmin = userSnapshot.roles.some((r: any) =>
-      [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+      [
+        UserRole.COMPANY_ADMIN,
+        UserRole.FINIQ_ADMIN,
+        UserRole.TENANT_ADMIN,
+      ].includes(r.role),
     );
 
     if (!isAdmin) {
@@ -163,7 +287,9 @@ export class InvestorController {
       );
 
       if (brokerProfiles.length === 0) {
-        throw new ForbiddenException('You do not have permission to view holdings');
+        throw new ForbiddenException(
+          'You do not have permission to view holdings',
+        );
       }
 
       let hasAccess = false;
@@ -175,12 +301,17 @@ export class InvestorController {
       }
 
       if (!hasAccess) {
-        throw new ForbiddenException('You do not have access to this investor holdings');
+        throw new ForbiddenException(
+          'You do not have access to this investor holdings',
+        );
       }
     }
 
     const holdings = await this.holdingsService.getHoldingsReport(id);
-    return ResponseFormatter.success(holdings, 'Holdings retrieved successfully');
+    return ResponseFormatter.success(
+      holdings,
+      'Holdings retrieved successfully',
+    );
   }
 
   /**
@@ -227,11 +358,17 @@ export class InvestorController {
   @HttpCode(HttpStatus.OK)
   async generateCredentials(
     @Param('id') id: string,
-    @Body() dto: GenerateCredentialsDto
+    @Body() dto: GenerateCredentialsDto,
   ) {
     this.logger.debug(`Generating credentials for investor - id: ${id}`);
-    const result = await this.investorService.generateCredentials(id, dto?.email);
-    return ResponseFormatter.success(result, 'Investor credentials generated successfully');
+    const result = await this.investorService.generateCredentials(
+      id,
+      dto?.email,
+    );
+    return ResponseFormatter.success(
+      result,
+      'Investor credentials generated successfully',
+    );
   }
 
   /**
@@ -243,9 +380,11 @@ export class InvestorController {
   @HttpCode(HttpStatus.OK)
   async getCapitalGains(@Body() body: any, @Req() req: any) {
     const { investor_id, start_date, end_date } = body;
-    
+
     if (!start_date || !end_date) {
-      throw new BadRequestException('start_date and end_date are required in the request body');
+      throw new BadRequestException(
+        'start_date and end_date are required in the request body',
+      );
     }
 
     const userSnapshot = req.user;
@@ -254,21 +393,29 @@ export class InvestorController {
     if (userSnapshot.type === 'investor') {
       // If investor, they can only view their own
       if (investor_id && investor_id !== userSnapshot.id) {
-        throw new ForbiddenException('You can only view your own capital gains');
+        throw new ForbiddenException(
+          'You can only view your own capital gains',
+        );
       }
       targetInvestorId = userSnapshot.id;
     } else {
       if (!targetInvestorId) {
-        throw new BadRequestException('investor_id is required in the request body for admins');
+        throw new BadRequestException(
+          'investor_id is required in the request body for admins',
+        );
       }
-      
+
       // Admin/Broker access checks
       if (!userSnapshot.roles) {
         throw new ForbiddenException('User roles not found');
       }
 
       const isAdmin = userSnapshot.roles.some((r: any) =>
-        [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+        [
+          UserRole.COMPANY_ADMIN,
+          UserRole.FINIQ_ADMIN,
+          UserRole.TENANT_ADMIN,
+        ].includes(r.role),
       );
 
       if (!isAdmin) {
@@ -277,9 +424,81 @@ export class InvestorController {
         );
 
         if (brokerProfiles.length === 0) {
-          throw new ForbiddenException('You do not have permission to view capital gains');
+          throw new ForbiddenException(
+            'You do not have permission to view capital gains',
+          );
         }
 
+        let hasAccess = false;
+        for (const profile of brokerProfiles) {
+          if (
+            await this.investorService.checkBrokerAccess(
+              profile.id,
+              targetInvestorId,
+            )
+          ) {
+            hasAccess = true;
+            break;
+          }
+        }
+
+        if (!hasAccess) {
+          throw new ForbiddenException(
+            'You do not have access to this investor capital gains',
+          );
+        }
+      }
+    }
+
+    const gains = await this.holdingsService.getCapitalGainsReport(
+      targetInvestorId,
+      start_date,
+      end_date,
+    );
+    return ResponseFormatter.success(
+      gains,
+      'Capital gains retrieved successfully',
+    );
+  }
+
+  /**
+   * GET /api/investors/:id/holdings/export
+   * Generate PDF export for investor's portfolio holdings
+   */
+  @Post(':id/holdings/export')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async exportHoldings(
+    @Param('id') investorId: string,
+    @Body('distributor_info') distributorInfo: any,
+    @Req() req: any,
+    @Res() res: any,
+  ) {
+    const userSnapshot = req.user;
+    let targetInvestorId = investorId;
+
+    if (userSnapshot.type === 'investor') {
+      if (investorId && investorId !== userSnapshot.id) {
+        throw new ForbiddenException('You can only view your own holdings');
+      }
+      targetInvestorId = userSnapshot.id;
+    } else {
+      if (!targetInvestorId) {
+        throw new BadRequestException('investor_id is required in the path for admins');
+      }
+      if (!userSnapshot.roles) {
+        throw new ForbiddenException('User roles not found');
+      }
+      const isAdmin = userSnapshot.roles.some((r: any) =>
+        [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+      );
+      if (!isAdmin) {
+        const brokerProfiles = userSnapshot.roles.filter((r: any) =>
+          [UserRole.BROKER, UserRole.SUB_BROKER].includes(r.role),
+        );
+        if (brokerProfiles.length === 0) {
+          throw new ForbiddenException('You do not have permission to view holdings');
+        }
         let hasAccess = false;
         for (const profile of brokerProfiles) {
           if (await this.investorService.checkBrokerAccess(profile.id, targetInvestorId)) {
@@ -287,37 +506,28 @@ export class InvestorController {
             break;
           }
         }
-
         if (!hasAccess) {
-          throw new ForbiddenException('You do not have access to this investor capital gains');
+          throw new ForbiddenException('You do not have access to this investor holdings');
         }
       }
     }
 
-    const gains = await this.holdingsService.getCapitalGainsReport(targetInvestorId, start_date, end_date);
-    return ResponseFormatter.success(gains, 'Capital gains retrieved successfully');
-  }
+    const holdingsData = await this.holdingsService.getHoldingsReport(targetInvestorId);
 
-  /**
-   * POST /api/investors/holdings-export
-   * Generate PDF export for investor's portfolio holdings
-   */
-  @Post('holdings-export')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  async exportHoldings(
-    @Body() body: { clientData: any, distributorInfo: any },
-    @Res() res: Response
-  ) {
-    const { clientData, distributorInfo } = body;
-    
-    // The UI handles fetching the correct user data via getHoldingsReport,
-    // so we just pipe that JSON data right into the PDF generator.
-    const buffer = await this.investorsExportService.generatePortfolioValuationPDF(clientData, distributorInfo);
-    
+    const buffer = await this.investorsExportService.generatePortfolioValuationPDF(
+      holdingsData,
+      distributorInfo,
+    );
+
     // Title Case formatting for filename
-    const rawName = clientData.investor_name || clientData.clientName || 'Investor';
-    const investorNameFormatted = rawName.toLowerCase().split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join('_').replace(/[^a-zA-Z0-9_]/gi, '');
+    const rawName =
+      holdingsData?.investor_name || holdingsData?.clientName || 'Investor';
+    const investorNameFormatted = rawName
+      .toLowerCase()
+      .split(' ')
+      .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join('_')
+      .replace(/[^a-zA-Z0-9_]/gi, '');
     const today = new Date().toLocaleDateString('en-GB').replace(/\//g, '_');
     const filename = `${investorNameFormatted}_Holdings_${today}.pdf`;
 
@@ -346,16 +556,22 @@ export class InvestorController {
       targetInvestorId = userSnapshot.id;
     } else {
       if (!targetInvestorId) {
-        throw new BadRequestException('investor_id is required in the request body for admins');
+        throw new BadRequestException(
+          'investor_id is required in the request body for admins',
+        );
       }
-      
+
       // Admin/Broker access checks
       if (!userSnapshot.roles) {
         throw new ForbiddenException('User roles not found');
       }
 
       const isAdmin = userSnapshot.roles.some((r: any) =>
-        [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+        [
+          UserRole.COMPANY_ADMIN,
+          UserRole.FINIQ_ADMIN,
+          UserRole.TENANT_ADMIN,
+        ].includes(r.role),
       );
 
       if (!isAdmin) {
@@ -364,24 +580,37 @@ export class InvestorController {
         );
 
         if (brokerProfiles.length === 0) {
-          throw new ForbiddenException('You do not have permission to view transactions');
+          throw new ForbiddenException(
+            'You do not have permission to view transactions',
+          );
         }
 
         let hasAccess = false;
         for (const profile of brokerProfiles) {
-          if (await this.investorService.checkBrokerAccess(profile.id, targetInvestorId)) {
+          if (
+            await this.investorService.checkBrokerAccess(
+              profile.id,
+              targetInvestorId,
+            )
+          ) {
             hasAccess = true;
             break;
           }
         }
 
         if (!hasAccess) {
-          throw new ForbiddenException('You do not have access to this investor transactions');
+          throw new ForbiddenException(
+            'You do not have access to this investor transactions',
+          );
         }
       }
     }
 
-    const report = await this.holdingsService.getTransactionReport(targetInvestorId);
-    return ResponseFormatter.success(report, 'Transactions retrieved successfully');
+    const report =
+      await this.holdingsService.getTransactionReport(targetInvestorId);
+    return ResponseFormatter.success(
+      report,
+      'Transactions retrieved successfully',
+    );
   }
 }

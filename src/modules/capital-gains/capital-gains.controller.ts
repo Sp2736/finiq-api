@@ -43,48 +43,49 @@ export class CapitalGainsController {
   async exportCapitalGains(
     @Body()
     body: {
+      investor_id: string;
+      from_date: string;
+      to_date: string;
+      period_label: string;
       format: 'pdf' | 'excel';
-      data: any;
-      fy: string;
-      distributorInfo: any;
+      distributor_info?: any;
     },
     @Res() res: Response,
   ) {
-    const { format, data, fy, distributorInfo } = body;
-
-    const buffer = await this.capitalGainsExportService.exportCapitalGains(
-      format,
-      data,
-      fy,
-      distributorInfo,
+    // Note: Authentication is handled by @UseGuards(JwtAuthGuard) at class level
+    const result = await this.capitalGainsService.getCapitalGains(
+      body.investor_id,
+      body.from_date,
+      body.to_date,
     );
 
-    // Use Title Case for the downloaded file name as well
-    const investorNameFormatted = data.investorDetails?.name
-      ? data.investorDetails.name
-          .toLowerCase()
-          .split(' ')
-          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join('_')
-          .replace(/[^a-zA-Z0-9_]/gi, '')
-      : 'Investor';
+    const buffer = await this.capitalGainsExportService.exportCapitalGains(
+      body.format,
+      body.investor_id,
+      body.from_date,
+      body.to_date,
+      body.distributor_info
+    );
 
-    if (format === 'excel') {
-      res.setHeader(
-        'Content-Type',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      );
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="Capital_Gains_${investorNameFormatted}_${fy}.xlsx"`,
-      );
-    } else {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="Capital_Gains_${investorNameFormatted}_${fy}.pdf"`,
-      );
-    }
+    const rawName = result?.investor_name || 'Investor';
+    const investorNameFormatted = rawName
+      .toLowerCase()
+      .split(' ')
+      .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join('_')
+      .replace(/[^a-zA-Z0-9_]/gi, '');
+
+    const ext = body.format === 'excel' ? 'xlsx' : 'pdf';
+    const contentType =
+      body.format === 'excel'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/pdf';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="Capital_Gains_${investorNameFormatted}_${body.period_label}.${ext}"`,
+    );
 
     res.send(buffer);
   }
