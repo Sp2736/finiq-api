@@ -88,26 +88,22 @@ export class InvestorAuthService {
 
   // ── Private helper ─────────────────────────────────────────────────────────
   private async generateInvestorAuthResponse(investor: any) {
+    const logo_base64 = investor.company?.details?.logo_base64 || null;
+
     const payload = {
       investor_id: investor.id,
       mobile: investor.mobile,
       username: investor.username,
       email: investor.email,
       company_id: investor.company_id,
+      name: investor.name,
     };
 
     const accessToken = this.jwtService.sign(payload);
-    const logo_base64 = investor.company?.details?.logo_base64 || null;
 
     return {
       access_token: accessToken,
-      investor: {
-        id: investor.id,
-        name: investor.name,
-        mobile: investor.mobile,
-        email: investor.email,
-        logo_base64: logo_base64,
-      },
+      logo_base64: logo_base64,
     };
   }
 

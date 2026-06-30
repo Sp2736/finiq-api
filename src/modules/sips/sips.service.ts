@@ -358,6 +358,8 @@ FROM combined
 ${statusFilter}
 ORDER BY trxn_no;
     `;
+// todo: join cams with cams_scheme_details on amc_code, to fetch the amc as amc_name
+// todo: join karvy with karvy_scheme_details on amc_code, to fetch the amc as amc_name
 
     const allRawRows: any[] = [];
     for (const t of typesToFetch) {

@@ -71,10 +71,9 @@ export class UserManagementService {
         );
       }
 
-      // 2. Create the base User record for login (Now including email)
+      // 2. Create the base User record for login (No email here)
       const user = manager.create(User, {
         phone_number: dto.phone_number,
-        email: dto.email, // <-- Added for new schema
         is_verified: true, // Assuming admin-created users are pre-verified
         company_id: dto.company_id,
         status: UserStatus.ACTIVE,
@@ -82,7 +81,6 @@ export class UserManagementService {
       const savedUser = await manager.save(User, user);
 
       // 3. Create the UserProfile record for role & details
-      // Split the full name into first and last name safely
       const nameParts = dto.name.trim().split(' ');
       const firstName = nameParts[0];
       const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
@@ -93,12 +91,12 @@ export class UserManagementService {
         company_id: dto.company_id,
         first_name: firstName,
         last_name: lastName,
-        email: dto.email, // Keep here if your UserProfile entity still expects it
+        email: dto.email, // <-- Handled safely in user_profiles
         is_active: true,
       });
       await manager.save(UserProfile, userProfile);
 
-      // 4. Create the SubBroker mapping record (Now including email)
+      // 4. Create the SubBroker mapping record
       let path = '';
       const parentId =
         dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null;
@@ -113,7 +111,7 @@ export class UserManagementService {
 
       const subBroker = manager.create(SubBroker, {
         name: dto.name,
-        email: dto.email, // <-- Added for new schema
+        email: dto.email,
         arn_id: dto.arn,
         parent_id: parentId,
         path: path || undefined,
@@ -208,34 +206,50 @@ export class UserManagementService {
       userSnapshot?.roles?.find((r: any) => r.company_id)?.company_id ||
       userSnapshot?.company_id;
 
-    // Fetch all brokers for the company
+    // 1. Fetch brokers
     let brokers = await this.subBrokerRepo.find({
       where: companyId ? { company_id: companyId } : undefined,
       relations: ['parent'],
       order: { created_at: 'ASC' },
     });
 
-    // Fetch all commission mappings in a single query
+    // 2. Fetch commissions
     const commissions = await this.commissionRepo.find();
     const commissionMap = new Map<string, number>();
     commissions.forEach((c) => {
       commissionMap.set(c.sub_broker_id, Number(c.share_percentage));
     });
 
-    // Enrich brokers with commission data
-    const sub_brokers = brokers.map((b) => ({
-      id: b.id,
-      name: b.name,
-      arn_id: b.arn_id,
-      parent_id: b.parent_id,
-      parent_name: b.parent?.name || null,
-      share_percentage: commissionMap.get(b.id) ?? null,
-      created_at: b.created_at,
-    }));
+    // 3. Fetch UserProfiles & Users to get cross-table data (phone & email)
+    const profiles = await this.userProfileRepo.find({
+      where: companyId ? { company_id: companyId } : undefined,
+      relations: ['user'],
+    });
 
-    return {
-      sub_brokers,
-    };
+    // Map profiles by email for quick lookup
+    const profileMap = new Map<string, UserProfile>();
+    profiles.forEach((p) => {
+      if (p.email) profileMap.set(p.email, p);
+    });
+
+    // 4. Enrich and return
+    const sub_brokers = brokers.map((b) => {
+      const profile = b.email ? profileMap.get(b.email) : null;
+
+      return {
+        id: b.id,
+        name: b.name,
+        email: b.email || profile?.email || null, // Ensure email is sent
+        phone_number: profile?.user?.phone_number || null, // Ensure phone is sent
+        arn_id: b.arn_id,
+        parent_id: b.parent_id,
+        parent_name: b.parent?.name || null,
+        share_percentage: commissionMap.get(b.id) ?? null,
+        created_at: b.created_at,
+      };
+    });
+
+    return { sub_brokers };
   }
 
   async getPaginatedUsers(
@@ -320,40 +334,25 @@ export class UserManagementService {
     }
 
     return await this.dataSource.transaction(async (manager) => {
-      // Update basic fields
+      const oldEmail = broker.email; // Store to find linked profile
+
+      // 1. Update basic SubBroker fields
       const updateData: Partial<SubBroker> = {};
       if (dto.name !== undefined) updateData.name = dto.name;
       if (dto.arn !== undefined) updateData.arn_id = dto.arn;
+      if (dto.email !== undefined) updateData.email = dto.email;
 
-      // Handle parent change (re-parenting)
+      // Handle parent change (re-parenting) logic...
       if (dto.parent_id !== undefined) {
-        const newParentId =
-          dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null;
-
-        // Prevent self-referencing
-        if (newParentId === id) {
-          throw new BadRequestException('A broker cannot be its own parent');
-        }
-
-        // Prevent circular hierarchy
+        const newParentId = dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null;
+        if (newParentId === id) throw new BadRequestException('A broker cannot be its own parent');
         if (newParentId) {
           const isDescendant = await this.isDescendantOf(newParentId, id);
-          if (isDescendant) {
-            throw new BadRequestException(
-              'Cannot set a descendant as parent (circular hierarchy)',
-            );
-          }
-
-          const newParent = await manager.findOne(SubBroker, {
-            where: { id: newParentId },
-          });
-          if (!newParent)
-            throw new NotFoundException('New parent broker not found');
-
+          if (isDescendant) throw new BadRequestException('Cannot set a descendant as parent (circular hierarchy)');
+          const newParent = await manager.findOne(SubBroker, { where: { id: newParentId } });
+          if (!newParent) throw new NotFoundException('New parent broker not found');
           updateData.parent_id = newParentId;
-          updateData.path = newParent.path
-            ? `${newParent.path}/${newParent.id}`
-            : newParent.id;
+          updateData.path = newParent.path ? `${newParent.path}/${newParent.id}` : newParent.id;
         } else {
           updateData.parent_id = null as any;
           updateData.path = '' as any;
@@ -364,66 +363,64 @@ export class UserManagementService {
         await manager.update(SubBroker, id, updateData);
       }
 
-      // Update commission share percentage
+      // 2. Sync changes to UserProfile and User tables
+      if (oldEmail || dto.email) {
+        const searchEmail = oldEmail || dto.email;
+        const profile = await manager.findOne(UserProfile, {
+          where: { email: searchEmail },
+          relations: ['user'], // Bring the linked User table along
+        });
+
+        if (profile) {
+          // Update Profile Name safely
+          if (dto.name !== undefined) {
+            const nameParts = dto.name.trim().split(' ');
+            profile.first_name = nameParts[0];
+            profile.last_name = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+          }
+          if (dto.email !== undefined) profile.email = dto.email;
+          await manager.save(UserProfile, profile);
+
+          // Update root User Phone Number & Email
+          if (profile.user) {
+            if (dto.phone_number !== undefined) profile.user.phone_number = dto.phone_number;
+            if (dto.email !== undefined) profile.user.email = dto.email;
+            await manager.save(User, profile.user);
+          }
+        }
+      }
+
+      // 3. Update commission share percentage
       if (dto.share_percentage !== undefined) {
-        const effectiveParentId =
-          dto.parent_id !== undefined
-            ? dto.parent_id && dto.parent_id !== ''
-              ? dto.parent_id
-              : null
-            : broker.parent_id;
+        const effectiveParentId = dto.parent_id !== undefined 
+          ? (dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null) 
+          : broker.parent_id;
 
         if (effectiveParentId) {
-          // Create or update mapping for sub-broker relative to its parent
-          const existingCommission = await manager.findOne(CommissionMapping, {
-            where: { sub_broker_id: id },
-          });
-
+          const existingCommission = await manager.findOne(CommissionMapping, { where: { sub_broker_id: id } });
           if (existingCommission) {
-            await manager.update(CommissionMapping, existingCommission.id, {
-              broker_id: effectiveParentId,
-              share_percentage: dto.share_percentage,
-            });
+            await manager.update(CommissionMapping, existingCommission.id, { broker_id: effectiveParentId, share_percentage: dto.share_percentage });
           } else {
-            const newCommission = manager.create(CommissionMapping, {
-              broker_id: effectiveParentId,
-              sub_broker_id: id,
-              share_percentage: dto.share_percentage,
-            });
+            const newCommission = manager.create(CommissionMapping, { broker_id: effectiveParentId, sub_broker_id: id, share_percentage: dto.share_percentage });
             await manager.save(CommissionMapping, newCommission);
           }
         } else {
-          // If no parent (Master), delete any existing share mapping
           await manager.delete(CommissionMapping, { sub_broker_id: id });
         }
-      } else if (
-        dto.parent_id !== undefined &&
-        (dto.parent_id === '' || dto.parent_id === null)
-      ) {
-        // If parent removed but share not specified, also cleanup for safety
+      } else if (dto.parent_id !== undefined && (dto.parent_id === '' || dto.parent_id === null)) {
         await manager.delete(CommissionMapping, { sub_broker_id: id });
       }
 
-      // If parent changed, rebuild paths for all descendants
       if (dto.parent_id !== undefined) {
         await this.rebuildDescendantPaths(manager, id);
       }
 
-      // Fetch and return the updated broker
-      const updated = await manager.findOne(SubBroker, {
-        where: { id },
-        relations: ['parent', 'children'],
-      });
-
-      const commission = await manager.findOne(CommissionMapping, {
-        where: { sub_broker_id: id },
-      });
+      const updated = await manager.findOne(SubBroker, { where: { id }, relations: ['parent', 'children'] });
+      const commission = await manager.findOne(CommissionMapping, { where: { sub_broker_id: id } });
 
       return {
         ...updated,
-        share_percentage: commission
-          ? Number(commission.share_percentage)
-          : null,
+        share_percentage: commission ? Number(commission.share_percentage) : null,
       };
     });
   }

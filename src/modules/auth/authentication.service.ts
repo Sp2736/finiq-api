@@ -165,6 +165,21 @@ export class AuthenticationService {
   private async generateAuthResponse(user: User, profiles: UserProfile[]) {
     const roles = UserMapper.mapRoles(profiles);
 
+    // Use company_id from the user's profile (from user_profiles table) — most reliable source.
+    // Falls back to user.company_id (now a real DB column after entity fix).
+    const companyIdForLogo =
+      roles.find((r) => r.company_id)?.company_id ?? user.company_id ?? null;
+
+    let logo_base64: string | null = null;
+    if (companyIdForLogo) {
+      try {
+        const companyDetail = await this.repository.findCompanyDetail(companyIdForLogo);
+        logo_base64 = companyDetail?.logo_base64 || null;
+      } catch (err) {
+        this.logger.warn(`Could not fetch company logo for ${companyIdForLogo}: ${err}`);
+      }
+    }
+
     const payload = {
       sub: user.id,
       phone_number: user.phone_number,
@@ -186,26 +201,6 @@ export class AuthenticationService {
       Date.now() + refreshExpiryDays * 24 * 60 * 60 * 1000,
     );
 
-    // fix: Fetch company details (assuming repository has access to company_id)
-    // const companyDetail = await this.repository.findCompanyDetail(
-    //   user.company_id,
-    // );
-
-    // Use company_id from the user's profile (from user_profiles table) — most reliable source.
-    // Falls back to user.company_id (now a real DB column after entity fix).
-    const companyIdForLogo =
-      roles.find((r) => r.company_id)?.company_id ?? user.company_id ?? null;
-
-    let logo_base64: string | null = null;
-    if (companyIdForLogo) {
-      try {
-        const companyDetail = await this.repository.findCompanyDetail(companyIdForLogo);
-        logo_base64 = companyDetail?.logo_base64 || null;
-      } catch (err) {
-        this.logger.warn(`Could not fetch company logo for ${companyIdForLogo}: ${err}`);
-      }
-    }
-
     await this.repository.saveRefreshToken(
       user.id,
       refresh_token,
@@ -215,12 +210,7 @@ export class AuthenticationService {
     return {
       access_token,
       refresh_token,
-      user: {
-        id: user.id,
-        phone_number: user.phone_number,
-        roles: roles,
-        company_logo: logo_base64,
-      },
+      company_logo: logo_base64,
     };
   }
 }

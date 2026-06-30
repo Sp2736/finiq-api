@@ -20,6 +20,9 @@ export class User {
   @Column({ nullable: true })
   phone_number: string;
 
+  @Column({ nullable: true })
+  email: string;
+
   @Column()
   is_verified: boolean;
 

@@ -19,6 +19,9 @@ export class SubBroker {
     name: string;
 
     @Column({ nullable: true })
+    email: string;
+
+    @Column({ nullable: true })
     arn_id: string;
 
     @Column({ type: 'uuid', nullable: true })
