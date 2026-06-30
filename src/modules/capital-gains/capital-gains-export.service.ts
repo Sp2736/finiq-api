@@ -51,10 +51,13 @@ const toTitleCase = (str: string): string => {
     .join(' ');
 };
 
+import { InvestorService } from '../investors/investors.service';
+
 @Injectable()
 export class CapitalGainsExportService {
   constructor(
     private readonly capitalGainsService: CapitalGainsService,
+    private readonly investorService: InvestorService,
   ) {}
   
   public async exportCapitalGains(
@@ -65,7 +68,21 @@ export class CapitalGainsExportService {
     distributorInfo?: any,
   ): Promise<Buffer> {
     const rawData = await this.capitalGainsService.getCapitalGains(investor_id, from_date, to_date);
-    const data: any = this.mapData(rawData);
+    
+    let investorDetails: any = null;
+    let staticDetails: any = null;
+    try {
+      investorDetails = await this.investorService.findById(investor_id);
+      console.log('investorDetails fetched:', investorDetails?.id);
+      staticDetails = await this.investorService.getInvestorAddress(investor_id);
+      console.log('staticDetails fetched:', staticDetails?.id);
+    } catch (error) {
+      console.warn(`Could not fetch investor details for ID: ${investor_id}`, error);
+    }
+
+    console.log('Final fallback test for PAN:', investorDetails?.pan, staticDetails?.pan_no);
+
+    const data: any = this.mapData(rawData, investorDetails, staticDetails);
     
     // Fallback if distributor info is not provided but needed by export templates
     if (distributorInfo) {
@@ -79,17 +96,28 @@ export class CapitalGainsExportService {
     }
   }
 
-  private mapData(rawData: any) {
+  private mapData(rawData: any, investorDetails?: any, staticDetails?: any) {
     const backendData = rawData?.gains_data || [];
-    const invName = rawData?.investor_name || 'Investor';
+    const invName = investorDetails?.name || rawData?.investor_name || staticDetails?.inv_name || 'Investor';
+
+    let fullAddress = 'Address Not Provided';
+    if (staticDetails) {
+      fullAddress = [
+        staticDetails.address1,
+        staticDetails.address2,
+        staticDetails.address3,
+        staticDetails.city,
+        staticDetails.pincode
+      ].filter(Boolean).join(', ') || 'Address Not Provided';
+    }
 
     const mapped = {
       investorDetails: {
         name: invName,
-        pan: 'N/A',
-        address: 'Address Not Provided',
-        mobile: 'N/A',
-        email: 'N/A',
+        pan: investorDetails?.pan || staticDetails?.pan_no || 'N/A',
+        address: fullAddress,
+        mobile: investorDetails?.mobile || staticDetails?.mobile_no || 'N/A',
+        email: investorDetails?.email || staticDetails?.email || 'N/A',
       },
       mutualFunds: [] as any[],
       capitalGainSummary: { shortTerm: 0, longTerm: 0, total: 0 },
@@ -885,7 +913,7 @@ export class CapitalGainsExportService {
           logoData = `data:image/png;base64,${logoData}`;
         }
         try {
-          doc.addImage(logoData, 'PNG', ML, 5, 32, 16);
+          doc.addImage(logoData, 'PNG', ML, 5, 36, 16);
         } catch (err) {
           console.warn('Could not render distributor logo:', err);
         }

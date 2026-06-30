@@ -170,6 +170,25 @@ export class InvestorRepository extends BaseRepository<Investor> {
   }
 
   /**
+   * Get the latest address and static details for an investor
+   */
+  async getLatestAddress(investorId: string) {
+    try {
+      const investor = await this.investorRepo
+        .createQueryBuilder('investor')
+        .leftJoinAndSelect('investor.static_details', 'static_details')
+        .where('investor.id = :investorId', { investorId })
+        .orderBy('static_details.created_at', 'DESC')
+        .getOne();
+
+      return investor?.static_details?.[0] || null;
+    } catch (error) {
+      this.logger.error(`Error getting latest address for investor ${investorId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Save an investor
    */
   async save(investor: Investor): Promise<Investor> {

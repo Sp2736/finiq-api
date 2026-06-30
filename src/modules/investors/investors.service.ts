@@ -87,6 +87,13 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
   }
 
   /**
+   * Get the latest address for an investor from static details
+   */
+  async getInvestorAddress(investorId: string) {
+    return this.investorRepository.getLatestAddress(investorId);
+  }
+
+  /**
    * Get investor by folio number
    */
   // async findByFolio(folio: string): Promise<InvestorDetailsDto> {
@@ -138,6 +145,20 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
       return result;
     } catch (error) {
       await this.handleError(error, 'findByPan');
+      throw error;
+    }
+  }
+
+  /**
+   * Get investor by email
+   */
+  async findByEmail(email: string): Promise<InvestorDto | null> {
+    try {
+      const investor = await this.investorRepository.findByEmail(email);
+      if (!investor) return null;
+      return this.mapToDetailsDto(investor);
+    } catch (error) {
+      await this.handleError(error, 'findByEmail');
       throw error;
     }
   }

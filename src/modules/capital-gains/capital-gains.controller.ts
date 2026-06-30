@@ -8,6 +8,7 @@ import {
   HttpStatus,
   UseGuards,
   Res,
+  Req,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { CapitalGainsService } from './capital-gains.service';
@@ -15,6 +16,7 @@ import { CapitalGainsExportService } from './capital-gains-export.service';
 import { CapitalGainsQueryDto } from './dto/capital-gains.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { ResponseFormatter } from 'src/common';
+import { InvestorService } from '../investors/investors.service';
 
 @Controller('api/capital-gains')
 @UseGuards(JwtAuthGuard)
@@ -22,13 +24,22 @@ export class CapitalGainsController {
   constructor(
     private readonly capitalGainsService: CapitalGainsService,
     private readonly capitalGainsExportService: CapitalGainsExportService,
+    private readonly investorService: InvestorService,
   ) {}
 
   @Post()
   @HttpCode(HttpStatus.OK)
-  async getCapitalGains(@Body() body: CapitalGainsQueryDto) {
+  async getCapitalGains(
+    @Body() body: CapitalGainsQueryDto,
+    @Req() req: any,
+  ) {
+    let targetInvestorId = body.investor_id;
+    if (targetInvestorId === 'me' || targetInvestorId === 'investor-id') {
+      targetInvestorId = req.user.id;
+    }
+
     const result = await this.capitalGainsService.getCapitalGains(
-      body.investor_id,
+      targetInvestorId,
       body.from_date,
       body.to_date,
     );
@@ -51,17 +62,23 @@ export class CapitalGainsController {
       distributor_info?: any;
     },
     @Res() res: Response,
+    @Req() req: any,
   ) {
+    let targetInvestorId = body.investor_id;
+    if (targetInvestorId === 'me' || targetInvestorId === 'investor-id') {
+      targetInvestorId = req.user.id;
+    }
+
     // Note: Authentication is handled by @UseGuards(JwtAuthGuard) at class level
     const result = await this.capitalGainsService.getCapitalGains(
-      body.investor_id,
+      targetInvestorId,
       body.from_date,
       body.to_date,
     );
 
     const buffer = await this.capitalGainsExportService.exportCapitalGains(
       body.format,
-      body.investor_id,
+      targetInvestorId,
       body.from_date,
       body.to_date,
       body.distributor_info

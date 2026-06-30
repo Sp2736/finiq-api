@@ -10,13 +10,14 @@ import { SubBroker } from '../../entities/sub-broker.entity';
 import { Investor } from '../../entities/investor.entity';
 import { CommissionMapping } from '../../entities/commission-mapping.entity';
 import { InvestorMapping } from '../../entities/investor-mapping.entity';
-import { UserProfile } from '../../entities/user-profile.entity';
 import { UserMapper } from '../../common/utils/user.mapper';
 import {
   CreateUserDto,
   CreateUserRole,
   UpdateSubBrokerDto,
 } from './dto/user-management.dto';
+import { User, UserStatus } from '../../entities/user.entity';
+import { UserProfile, UserRole } from '../../entities/user-profile.entity';
 
 @Injectable()
 export class UserManagementService {
@@ -53,7 +54,51 @@ export class UserManagementService {
   }
 
   private async createSubBroker(dto: CreateUserDto) {
+    if (!dto.phone_number) {
+      throw new BadRequestException(
+        'Phone number is required to create a login for the sub-broker.',
+      );
+    }
+
     return await this.dataSource.transaction(async (manager) => {
+      // 1. Check if user already exists
+      const existingUser = await manager.findOne(User, {
+        where: { phone_number: dto.phone_number },
+      });
+      if (existingUser) {
+        throw new BadRequestException(
+          'A user with this phone number already exists.',
+        );
+      }
+
+      // 2. Create the base User record for login (Now including email)
+      const user = manager.create(User, {
+        phone_number: dto.phone_number,
+        email: dto.email, // <-- Added for new schema
+        is_verified: true, // Assuming admin-created users are pre-verified
+        company_id: dto.company_id,
+        status: UserStatus.ACTIVE,
+      });
+      const savedUser = await manager.save(User, user);
+
+      // 3. Create the UserProfile record for role & details
+      // Split the full name into first and last name safely
+      const nameParts = dto.name.trim().split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+      const userProfile = manager.create(UserProfile, {
+        user_id: savedUser.id,
+        role: UserRole.SUB_BROKER,
+        company_id: dto.company_id,
+        first_name: firstName,
+        last_name: lastName,
+        email: dto.email, // Keep here if your UserProfile entity still expects it
+        is_active: true,
+      });
+      await manager.save(UserProfile, userProfile);
+
+      // 4. Create the SubBroker mapping record (Now including email)
       let path = '';
       const parentId =
         dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null;
@@ -68,6 +113,7 @@ export class UserManagementService {
 
       const subBroker = manager.create(SubBroker, {
         name: dto.name,
+        email: dto.email, // <-- Added for new schema
         arn_id: dto.arn,
         parent_id: parentId,
         path: path || undefined,
@@ -76,6 +122,7 @@ export class UserManagementService {
 
       const savedBroker = await manager.save(SubBroker, subBroker);
 
+      // 5. Create Commission Mapping if applicable
       if (dto.share_percentage !== undefined && parentId) {
         const commission = manager.create(CommissionMapping, {
           broker_id: parentId,

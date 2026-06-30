@@ -5,7 +5,10 @@ import { CapitalGainsController } from './capital-gains.controller';
 import { CapitalGainsService } from './capital-gains.service';
 import { CapitalGainsExportService } from './capital-gains-export.service';
 
+import { InvestorModule } from '../investors/investors.module';
+
 @Module({
+  imports: [InvestorModule],
   controllers: [CapitalGainsController],
   providers: [CapitalGainsService, CapitalGainsExportService],
   exports: [CapitalGainsService]

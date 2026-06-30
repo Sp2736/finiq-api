@@ -140,7 +140,7 @@ export class InvestorController {
     let targetInvestorId = investorId;
 
     if (userSnapshot.type === 'investor') {
-      if (investorId && investorId !== userSnapshot.id) {
+      if (investorId && investorId !== userSnapshot.id && investorId !== 'me' && investorId !== 'investor-id') {
         throw new ForbiddenException('You can only view your own transactions');
       }
       targetInvestorId = userSnapshot.id;
@@ -256,10 +256,10 @@ export class InvestorController {
 
     // 1. If requester is an investor, they can only see their own holdings
     if (userSnapshot.type === 'investor') {
-      if (userSnapshot.id !== id) {
+      if (id && id !== userSnapshot.id && id !== 'me' && id !== 'investor-id') {
         throw new ForbiddenException('You can only view your own holdings');
       }
-      const investorHoldings = await this.holdingsService.getHoldingsReport(id);
+      const investorHoldings = await this.holdingsService.getHoldingsReport(userSnapshot.id);
       return ResponseFormatter.success(
         investorHoldings,
         'Holdings retrieved successfully',
@@ -392,7 +392,7 @@ export class InvestorController {
 
     if (userSnapshot.type === 'investor') {
       // If investor, they can only view their own
-      if (investor_id && investor_id !== userSnapshot.id) {
+      if (investor_id && investor_id !== userSnapshot.id && investor_id !== 'me' && investor_id !== 'investor-id') {
         throw new ForbiddenException(
           'You can only view your own capital gains',
         );
@@ -478,7 +478,7 @@ export class InvestorController {
     let targetInvestorId = investorId;
 
     if (userSnapshot.type === 'investor') {
-      if (investorId && investorId !== userSnapshot.id) {
+      if (investorId && investorId !== userSnapshot.id && investorId !== 'me' && investorId !== 'investor-id') {
         throw new ForbiddenException('You can only view your own holdings');
       }
       targetInvestorId = userSnapshot.id;
@@ -550,7 +550,7 @@ export class InvestorController {
 
     if (userSnapshot.type === 'investor') {
       // If investor, they can only view their own
-      if (investor_id && investor_id !== userSnapshot.id) {
+      if (investor_id && investor_id !== userSnapshot.id && investor_id !== 'me' && investor_id !== 'investor-id') {
         throw new ForbiddenException('You can only view your own transactions');
       }
       targetInvestorId = userSnapshot.id;
