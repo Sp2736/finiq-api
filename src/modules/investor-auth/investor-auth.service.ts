@@ -90,6 +90,30 @@ export class InvestorAuthService {
   private async generateInvestorAuthResponse(investor: any) {
     const logo_base64 = investor.company?.details?.logo_base64 || null;
 
+    let companyInfo: {
+      name: string | null;
+      address: string | null;
+      email: string | null;
+      phone: string | null;
+    } | null = null;
+    if (investor.company) {
+      const details = investor.company.details;
+      const addressParts = details ? [
+        details.address_line1,
+        details.address_line2,
+        details.city,
+        details.state,
+        details.pincode,
+      ].filter(Boolean) : [];
+      
+      companyInfo = {
+        name: investor.company.name || null,
+        address: addressParts.length > 0 ? addressParts.join(', ') : null,
+        email: investor.company.email || null,
+        phone: investor.company.phone_number || null,
+      };
+    }
+
     const payload = {
       investor_id: investor.id,
       mobile: investor.mobile,
@@ -104,6 +128,7 @@ export class InvestorAuthService {
     return {
       access_token: accessToken,
       logo_base64: logo_base64,
+      company_info: companyInfo,
     };
   }
 

@@ -170,13 +170,35 @@ export class AuthenticationService {
     const companyIdForLogo =
       roles.find((r) => r.company_id)?.company_id ?? user.company_id ?? null;
 
+    let companyInfo: {
+      name: string | null;
+      address: string | null;
+      email: string | null;
+      phone: string | null;
+    } | null = null;
+
     let logo_base64: string | null = null;
     if (companyIdForLogo) {
       try {
         const companyDetail = await this.repository.findCompanyDetail(companyIdForLogo);
         logo_base64 = companyDetail?.logo_base64 || null;
+        if (companyDetail) {
+          const addressParts = [
+            companyDetail.address_line1,
+            companyDetail.address_line2,
+            companyDetail.city,
+            companyDetail.state,
+            companyDetail.pincode,
+          ].filter(Boolean);
+          companyInfo = {
+            name: companyDetail.company?.name || null,
+            address: addressParts.join(', ') || null,
+            email: companyDetail.company?.email || null,
+            phone: companyDetail.company?.phone_number || null,
+          };
+        }
       } catch (err) {
-        this.logger.warn(`Could not fetch company logo for ${companyIdForLogo}: ${err}`);
+        this.logger.warn(`Could not fetch company info for ${companyIdForLogo}: ${err}`);
       }
     }
 
@@ -211,6 +233,7 @@ export class AuthenticationService {
       access_token,
       refresh_token,
       company_logo: logo_base64,
+      company_info: companyInfo,
     };
   }
 }

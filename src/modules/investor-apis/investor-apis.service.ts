@@ -641,12 +641,13 @@ export class InvestorApisService {
               END                 AS systematic_type,
               'CAMS'              AS source,
               cd.cease_date       AS termination_date,
-              cd.amc_code         AS amc_code,
+              COALESCE(csd.amc, cd.amc_code) AS amc_name,
               CONCAT(cd.amc_code, cd.scheme_code) AS product_code
           FROM cams_sip_stp_details cd
           JOIN cams_investor_static_details cs
             ON cs.foliochk = cd.folio_no
             AND cs.product = CONCAT(cd.amc_code, cd.scheme_code)
+          LEFT JOIN cams_scheme_details csd ON csd.amc_code = cd.amc_code AND csd.sch_code = cd.scheme_code
           WHERE cs.investor_id = $1::uuid
             AND cd.aut_trntyp = $2
 
@@ -665,12 +666,13 @@ export class InvestorApisService {
               kr.transaction_type    AS systematic_type,
               'KARVY'             AS source,
               kr.terminate_date   AS termination_date,
-              NULL                AS amc_code,
+              COALESCE(ksd.amc_name, kr.fund_code) AS amc_name,
               kr.product_code     AS product_code
           FROM karvy_sip_registrations kr
           JOIN karvy_investor_master_data km
             ON km.folio = kr.folio_number
             AND km.product_code = kr.product_code
+          LEFT JOIN karvy_scheme_details ksd ON ksd.product_code = kr.product_code
           WHERE km.investor_id = $1::uuid
             AND kr.transaction_type = $3
       )
@@ -724,7 +726,7 @@ export class InvestorApisService {
       systematic_type: r.systematic_type,
       source: r.source,
       termination_date: r.termination_date ?? null,
-      amc_code: r.amc_code,
+      amc_name: r.amc_name || 'Unknown',
       product_code: r.product_code,
     }));
   }

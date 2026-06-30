@@ -18,7 +18,9 @@ export class ResponseInterceptor implements NestInterceptor {
         const response = context.switchToHttp().getResponse();
 
         // Add timing header for monitoring
-        response.header('X-Response-Time', `${duration}ms`);
+        if (!response.headersSent) {
+          response.header('X-Response-Time', `${duration}ms`);
+        }
 
         // If already formatted, return as is
         if (data?.success !== undefined) {

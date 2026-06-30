@@ -26,6 +26,7 @@ export class AuthenticationRepository {
     if (!companyId) return null;
     return await this.companyDetailRepo.findOne({
       where: { company_id: companyId },
+      relations: ['company'],
     });
   }
 

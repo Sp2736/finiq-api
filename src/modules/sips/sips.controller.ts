@@ -11,14 +11,19 @@ import {
   ForbiddenException,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { SipsService } from './sips.service';
+import { SystematicReportExportService } from './systematic-report-export.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 
 @Controller('api/sips')
 @UseGuards(JwtAuthGuard)
 export class SipsController {
-  constructor(private readonly sipsService: SipsService) {}
+  constructor(
+    private readonly sipsService: SipsService,
+    private readonly systematicReportExportService: SystematicReportExportService,
+  ) {}
 
   // 1. Company Level: Grouped by Investor (Now with Search)
   @Get('company/summary')
@@ -59,14 +64,49 @@ export class SipsController {
       );
     }
 
-    const { type, status, arnIds, registrar } = body;
+    const { type, status, arnIds, registrar, investor_id, investorId } = body;
     const report = await this.sipsService.getSystematicReport(
       req.user,
       type,
       status,
       arnIds,
       registrar,
+      investor_id || investorId,
     );
     return { success: true, data: report };
+  }
+
+  @Post('systematic-report/export')
+  @HttpCode(HttpStatus.OK)
+  async exportSystematicReport(
+    @Body() body: any,
+    @Req() req: any,
+    @Res() res: any,
+  ) {
+    if (req.user?.type === 'investor') {
+      throw new ForbiddenException('Only distributors can access this endpoint');
+    }
+    const { type, status, arnIds, registrar, investor_id, investorId, investorLabel, groupBy, distributor_info } = body;
+
+    const report = await this.sipsService.getSystematicReport(
+      req.user, type, status, arnIds, registrar, investor_id || investorId,
+    );
+
+    const pdfBuffer = this.systematicReportExportService.generatePDF(
+      report,
+      {
+        type: type || 'All',
+        investorLabel: investorLabel || 'All Investors',
+        groupBy: groupBy || 'None',
+      },
+      distributor_info,
+    );
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="systematic-transactions-report.pdf"',
+      'Content-Length': pdfBuffer.length,
+    });
+    res.end(pdfBuffer);
   }
 }

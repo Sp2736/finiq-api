@@ -115,7 +115,8 @@ export class SipsService {
           cd.auto_amount::numeric as installment_amount,
           cd.periodicity as frequency,
           'ACTIVE' as status,
-          cd.from_date as start_date
+          cd.from_date as start_date,
+          cd.to_date as end_date
         FROM cams_investor_static_details cs
         JOIN cams_sip_stp_details cd
           ON cs.foliochk = cd.folio_no
@@ -134,7 +135,8 @@ export class SipsService {
           kr.amount::numeric as installment_amount,
           kr.frequency,
           'ACTIVE' as status,
-          kr.start_date
+          kr.start_date,
+          kr.end_date
         FROM karvy_investor_master_data km
         JOIN karvy_sip_registrations kr
           ON km.folio = kr.folio_number
@@ -225,6 +227,7 @@ export class SipsService {
     status?: string,
     arnIds?: string[],
     registrar?: string, // <-- Added registrar parameter
+    investorId?: string,
   ) {
     const companyId =
       user?.roles?.find((r: any) => r.company_id)?.company_id ||
@@ -272,22 +275,21 @@ export class SipsService {
     // Determine types to fetch (single type query run in parallel/sequence for 'ALL')
     const typesToFetch = type ? [type.toUpperCase()] : ['SIP', 'STP', 'SWP'];
 
-    const arnCondition = hasArnFilter ? 'AND id = ANY($4::uuid[])' : '';
+    let paramIndex = 4;
+    const arnCondition = hasArnFilter ? `AND id = ANY($${paramIndex}::uuid[])` : '';
+    if (hasArnFilter) paramIndex++;
 
     let statusFilter = '';
     if (status) {
       const statusUpper = status.toUpperCase();
       if (statusUpper === 'CURRENTLY_RUNNING') {
-        statusFilter =
-          'WHERE start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE AND termination_date IS NULL';
+        statusFilter = "WHERE mapped_status = 'ACTIVE'";
       } else if (statusUpper === 'FORTHCOMING') {
-        statusFilter = 'WHERE start_date > CURRENT_DATE';
+        statusFilter = "WHERE mapped_status = 'FORTHCOMING'";
       } else if (statusUpper === 'PREMATURELY_TERMINATED') {
-        statusFilter =
-          'WHERE termination_date IS NOT NULL AND termination_date < end_date';
+        statusFilter = "WHERE mapped_status = 'TERMINATED'";
       } else if (statusUpper === 'DUE_TO_MATURITY') {
-        statusFilter =
-          'WHERE end_date < CURRENT_DATE AND termination_date IS NULL';
+        statusFilter = "WHERE mapped_status = 'EXPIRED'";
       }
     }
 
@@ -301,6 +303,14 @@ export class SipsService {
       } else if (regUpper === 'KARVY') {
         camsCondition = 'AND 1=0';
       }
+    }
+
+    let camsInvestorCondition = '';
+    let karvyInvestorCondition = '';
+    if (investorId && investorId !== 'ALL') {
+      camsInvestorCondition = `AND cd.pan IN (SELECT pan_no FROM investors WHERE id = $${paramIndex}::uuid)`;
+      karvyInvestorCondition = `AND kr.investor_id = $${paramIndex}::uuid`;
+      paramIndex++;
     }
 
     const query = `
@@ -326,11 +336,23 @@ combined AS (
         END                 AS systematic_type,
         'CAMS'              AS source,
         cd.cease_date       AS termination_date,
-        cd.amc_code         AS amc_code
+        COALESCE(csd.amc, cd.amc_code) AS amc_name,
+        COALESCE(cd.remarks, '') AS rta_status,
+        CASE
+            WHEN LOWER(cd.remarks) LIKE '%terminated%' OR LOWER(cd.remarks) LIKE '%rejection%' THEN 'TERMINATED'
+            WHEN LOWER(cd.remarks) LIKE '%expired%' THEN 'EXPIRED'
+            WHEN LOWER(cd.remarks) LIKE '%pending%' THEN 'PENDING'
+            WHEN cd.from_date > CURRENT_DATE THEN 'FORTHCOMING'
+            WHEN cd.cease_date IS NOT NULL AND cd.cease_date < CURRENT_DATE THEN 'TERMINATED'
+            WHEN cd.to_date < CURRENT_DATE AND cd.cease_date IS NULL THEN 'EXPIRED'
+            ELSE 'ACTIVE'
+        END AS mapped_status
     FROM cams_sip_stp_details cd
+    LEFT JOIN cams_scheme_details csd ON csd.amc_code = cd.amc_code AND csd.sch_code = cd.scheme_code
     WHERE cd.company_arn_id IN (SELECT id FROM company_arns_filter)
       AND cd.aut_trntyp = $2
       ${camsCondition}
+      ${camsInvestorCondition}
 
     UNION ALL
 
@@ -346,11 +368,24 @@ combined AS (
         kr.transaction_type    AS systematic_type,
         'KARVY'             AS source,
         kr.terminate_date   AS termination_date,
-        kr.fund_code        AS amc_code
+        COALESCE(ksd.amc_name, kr.fund_code) AS amc_name,
+        COALESCE(kr.status, '') AS rta_status,
+        CASE
+            WHEN LOWER(kr.status) LIKE '%terminated%' OR LOWER(kr.status) LIKE '%rejection%' THEN 'TERMINATED'
+            WHEN LOWER(kr.status) LIKE '%expired%' THEN 'EXPIRED'
+            WHEN LOWER(kr.status) LIKE '%pending%' THEN 'PENDING'
+            WHEN LOWER(kr.status) LIKE '%live%' OR LOWER(kr.status) LIKE '%active%' THEN 'ACTIVE'
+            WHEN kr.start_date > CURRENT_DATE THEN 'FORTHCOMING'
+            WHEN kr.terminate_date IS NOT NULL AND kr.terminate_date < CURRENT_DATE THEN 'TERMINATED'
+            WHEN kr.end_date < CURRENT_DATE AND kr.terminate_date IS NULL THEN 'EXPIRED'
+            ELSE 'ACTIVE'
+        END AS mapped_status
     FROM karvy_sip_registrations kr
+    LEFT JOIN karvy_scheme_details ksd ON ksd.product_code = kr.product_code
     WHERE kr.company_arn_id IN (SELECT id FROM company_arns_filter)
       AND kr.transaction_type = $3
       ${karvyCondition}
+      ${karvyInvestorCondition}
 )
 SELECT DISTINCT ON (trxn_no)
     *
@@ -358,8 +393,6 @@ FROM combined
 ${statusFilter}
 ORDER BY trxn_no;
     `;
-// todo: join cams with cams_scheme_details on amc_code, to fetch the amc as amc_name
-// todo: join karvy with karvy_scheme_details on amc_code, to fetch the amc as amc_name
 
     const allRawRows: any[] = [];
     for (const t of typesToFetch) {
@@ -379,6 +412,9 @@ ORDER BY trxn_no;
       const params: any[] = [companyId, camsType, karvyType];
       if (hasArnFilter) {
         params.push(arnIds);
+      }
+      if (investorId && investorId !== 'ALL') {
+        params.push(investorId);
       }
 
       const rows = await this.dataSource.query(query, params);
@@ -415,7 +451,9 @@ ORDER BY trxn_no;
       systematic_type: r.systematic_type,
       source: r.source,
       termination_date: r.termination_date ?? null,
-      amc_code: r.amc_code || 'Unknown',
+      amc_name: r.amc_name || 'Unknown',
+      rta_status: r.rta_status,
+      mapped_status: r.mapped_status,
     }));
   }
 }
