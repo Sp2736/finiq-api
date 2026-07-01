@@ -86,14 +86,22 @@ export class SipsController {
     if (req.user?.type === 'investor') {
       throw new ForbiddenException('Only distributors can access this endpoint');
     }
-    const { type, status, arnIds, registrar, investor_id, investorId, investorLabel, groupBy, distributor_info } = body;
 
-    const report = await this.sipsService.getSystematicReport(
-      req.user, type, status, arnIds, registrar, investor_id || investorId,
-    );
+    const { data, type, investorLabel, groupBy, distributor_info } = body;
+
+    if (!Array.isArray(data)) {
+      throw new BadRequestException(
+        'data must be an array of systematic transaction records',
+      );
+    }
+    if (data.length > 20000) {
+      throw new BadRequestException(
+        'Too many records to export in a single request (max 20000)',
+      );
+    }
 
     const pdfBuffer = this.systematicReportExportService.generatePDF(
-      report,
+      data,
       {
         type: type || 'All',
         investorLabel: investorLabel || 'All Investors',
@@ -102,9 +110,16 @@ export class SipsController {
       distributor_info,
     );
 
+    const safeInvestorName = String(investorLabel || 'All_Investors')
+      .replace(/[^a-zA-Z0-9\s_-]/g, '')
+      .trim()
+      .replace(/\s+/g, '_') || 'All_Investors';
+    const dateStr = new Date().toISOString().split('T')[0];
+    const filename = `${safeInvestorName}-Systematic_Report_${type || 'All'}_${dateStr}.pdf`;
+
     res.set({
       'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="systematic-transactions-report.pdf"',
+      'Content-Disposition': `attachment; filename="${filename}"`,
       'Content-Length': pdfBuffer.length,
     });
     res.end(pdfBuffer);
