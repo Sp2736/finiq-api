@@ -1,20 +1,44 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { BaseService, PaginationHelper, NotFoundException, ResponseFormatter, CacheService } from 'src/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import {
+  BaseService,
+  PaginationHelper,
+  NotFoundException,
+  ResponseFormatter,
+  CacheService,
+} from 'src/common';
 import { CamsInvestorStaticDetail, Investor } from 'src/entities';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { InvestorRepository } from './investors.repository';
-import { InvestorResponseDto, InvestorDto, InvestorListItemDto, PortfolioHoldingsDto, BalanceSummaryDto, FolioStatusDetailsDto } from './dtos';
+import {
+  InvestorResponseDto,
+  InvestorDto,
+  InvestorListItemDto,
+  PortfolioHoldingsDto,
+  BalanceSummaryDto,
+  FolioStatusDetailsDto,
+} from './dtos';
 
 import { InvestorMapping } from 'src/entities/investor-mapping.entity';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 
+import { HierarchyAccessService } from 'src/common/services/hierarchy-access.service';
+
 /**
  * Investor Service - Business logic for investor operations
  */
 @Injectable()
-export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, any> {
+export class InvestorService extends BaseService<
+  CamsInvestorStaticDetail,
+  any,
+  any
+> {
   protected readonly logger = new Logger(InvestorService.name);
   private readonly CACHE_PREFIX = 'investors';
 
@@ -23,32 +47,67 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
     @InjectRepository(InvestorMapping)
     private readonly investorMappingRepo: Repository<InvestorMapping>,
     private cacheService: CacheService,
+    private hierarchyAccess: HierarchyAccessService,
   ) {
     super();
   }
 
   /**
-   * Check if a broker has access to an investor
+   * Helper to verify if the caller is allowed to read this investor's data
+   * Returns the resolved targetInvestorId (in case of 'me')
    */
-  async checkBrokerAccess(brokerProfileId: string, investorId: string): Promise<boolean> {
-    const mapping = await this.investorMappingRepo.findOne({
-      where: {
-        sub_broker_id: brokerProfileId,
-        investor_id: investorId,
-        is_active: true,
-      },
-    });
-    return !!mapping;
+  async assertInvestorReadAccess(
+    userSnapshot: any,
+    targetInvestorId: string,
+  ): Promise<string> {
+    if (userSnapshot.type === 'investor') {
+      if (
+        targetInvestorId &&
+        targetInvestorId !== userSnapshot.id &&
+        targetInvestorId !== 'me' &&
+        targetInvestorId !== 'investor-id'
+      ) {
+        throw new ForbiddenException('You can only view your own data');
+      }
+      return userSnapshot.id;
+    }
+
+    if (!targetInvestorId) {
+      throw new BadRequestException('investor_id is required for admins');
+    }
+
+    const access = await this.hierarchyAccess.resolveAccess(userSnapshot);
+    const investor = await this.investorRepository.findById(targetInvestorId);
+    if (!investor) {
+      throw new NotFoundException('Investor', `id ${targetInvestorId}`);
+    }
+
+    // Check tenant boundary
+    if (access.companyId && investor.company_id !== access.companyId) {
+      throw new NotFoundException('Investor', `id ${targetInvestorId}`);
+    }
+    this.hierarchyAccess.assertCompanyAllowed(access, investor.company_id);
+
+    await this.hierarchyAccess.assertInvestorAccess(
+      access,
+      targetInvestorId,
+      this.investorMappingRepo,
+    );
+
+    return targetInvestorId;
   }
 
   /**
    * Get all investors with pagination and filtering
    */
-  async findAll(page: number = 1, limit: number = 10) {
+  async findAll(page: number = 1, limit: number = 10, access?: any) {
     try {
       const pagination = PaginationHelper.getPaginationParams(page, limit);
 
-      const [data, total] = await this.investorRepository.findAll(pagination);
+      const [data, total] = await this.investorRepository.findAll(
+        pagination,
+        access,
+      );
 
       const investors = data.map((inv) => this.mapToListDto(inv));
       return this.formatPaginatedResponse(investors, total, pagination);
@@ -166,21 +225,32 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
   /**
    * Search investors
    */
-  async search(searchTerm: string, page: number = 1, limit: number = 10) {
+  async search(
+    searchTerm: string,
+    page: number = 1,
+    limit: number = 10,
+    access?: any,
+  ) {
     try {
       // Get pagination parameters
       const pagination = PaginationHelper.getPaginationParams(page, limit);
 
       // Call the repository search method
-      const [data, total] = await this.investorRepository.search(searchTerm, pagination);
+      const [data, total] = await this.investorRepository.search(
+        searchTerm,
+        pagination,
+        access,
+      );
 
       // Map the returned data to the API response
       const investors = data.map((inv) => ({
         ...this.mapToListDto(inv),
-        assigned_broker: inv.mappings?.[0]?.sub_broker ? {
-          name: inv.mappings[0].sub_broker.name,
-          arn: inv.mappings[0].sub_broker.arn_id
-        } : null
+        assigned_broker: inv.mappings?.[0]?.sub_broker
+          ? {
+              name: inv.mappings[0].sub_broker.name,
+              arn: inv.mappings[0].sub_broker.arn_id,
+            }
+          : null,
       }));
 
       // Format the paginated response
@@ -237,25 +307,35 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
   async generateCredentials(investorId: string, email?: string) {
     try {
       if (!email) {
-        throw new BadRequestException('Email is required to generate credentials');
+        throw new BadRequestException(
+          'Email is required to generate credentials',
+        );
       }
 
       const investor = await this.investorRepository.findById(investorId);
-      if (!investor) throw new NotFoundException('Investor', `id ${investorId}`);
+      if (!investor)
+        throw new NotFoundException('Investor', `id ${investorId}`);
 
       if (investor.username) {
-        throw new BadRequestException('Credentials have already been generated for this investor');
+        throw new BadRequestException(
+          'Credentials have already been generated for this investor',
+        );
       }
 
       const existingAccount = await this.investorRepository.findByEmail(email);
       if (existingAccount && existingAccount.id !== investorId) {
-        throw new BadRequestException('Email is already in use by another investor');
+        throw new BadRequestException(
+          'Email is already in use by another investor',
+        );
       }
 
       investor.email = email;
 
-      const lastUsernameInvestor = await this.investorRepository.findLatestUsername();
-      const nextUsername = this.generateNextUsername(lastUsernameInvestor?.username || null);
+      const lastUsernameInvestor =
+        await this.investorRepository.findLatestUsername();
+      const nextUsername = this.generateNextUsername(
+        lastUsernameInvestor?.username || null,
+      );
       investor.username = nextUsername;
 
       // Generate a random 8 char alphanumeric password
@@ -271,14 +351,13 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
         username: investor.username,
         password: tempPassword,
         email: investor.email,
-        message: 'Credentials generated successfully'
+        message: 'Credentials generated successfully',
       };
     } catch (error) {
       await this.handleError(error, 'generateCredentials');
       throw error;
     }
   }
-
 
   /**
    * Get investor statistics
@@ -313,10 +392,12 @@ export class InvestorService extends BaseService<CamsInvestorStaticDetail, any, 
       guardian_pan: investor.guardian_pan ?? '',
       username: investor.username ?? '',
       email: investor.email ?? '',
-      assigned_broker: investor.mappings?.[0]?.sub_broker ? {
-        name: investor.mappings[0].sub_broker.name,
-        arn: investor.mappings[0].sub_broker.arn_id
-      } : null
+      assigned_broker: investor.mappings?.[0]?.sub_broker
+        ? {
+            name: investor.mappings[0].sub_broker.name,
+            arn: investor.mappings[0].sub_broker.arn_id,
+          }
+        : null,
     };
   }
 

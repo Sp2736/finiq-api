@@ -11,6 +11,7 @@ import { CamsSchemeDetail } from 'src/entities/cams-scheme-detail.entity';
 import { InvestorMapping } from 'src/entities/investor-mapping.entity';
 import { UserProfile } from 'src/entities/user-profile.entity';
 import { SubBroker } from 'src/entities/sub-broker.entity';
+import { CommonModule } from 'src/common/common.module';
 
 @Module({
     imports: [
@@ -24,6 +25,7 @@ import { SubBroker } from 'src/entities/sub-broker.entity';
             UserProfile,
             SubBroker,
         ]),
+        CommonModule,
     ],
     controllers: [DashboardController],
     providers: [DashboardService, DashboardRepository],

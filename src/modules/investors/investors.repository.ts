@@ -2,7 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, FindOptionsWhere } from 'typeorm';
 import { BaseRepository, PaginationParams } from 'src/common';
-import { CamsInvestorStaticDetail, NavHistory, CamsSchemeDetail, CamsInvestorTransaction, CamsSipStpDetail, Investor } from 'src/entities';
+import {
+  CamsInvestorStaticDetail,
+  NavHistory,
+  CamsSchemeDetail,
+  CamsInvestorTransaction,
+  CamsSipStpDetail,
+  Investor,
+} from 'src/entities';
 
 /**
  * Investor Repository - Handles all investor data operations
@@ -29,10 +36,19 @@ export class InvestorRepository extends BaseRepository<Investor> {
   /**
    * Override findAll to include mappings and sub-broker info
    */
-  async findAll(pagination: PaginationParams): Promise<[Investor[], number]> {
+  async findAll(
+    pagination: PaginationParams,
+    access?: any,
+  ): Promise<[Investor[], number]> {
     try {
-      const query = this.investorRepo.createQueryBuilder('investor')
-        .leftJoinAndSelect('investor.mappings', 'mapping', 'mapping.is_active = :isActive', { isActive: true })
+      const query = this.investorRepo
+        .createQueryBuilder('investor')
+        .leftJoinAndSelect(
+          'investor.mappings',
+          'mapping',
+          'mapping.is_active = :isActive',
+          { isActive: true },
+        )
         .leftJoinAndSelect('mapping.sub_broker', 'sub_broker')
         .distinctOn(['investor.pan'])
         .orderBy('investor.pan', 'ASC')
@@ -40,12 +56,46 @@ export class InvestorRepository extends BaseRepository<Investor> {
         .skip(pagination.skip || 0)
         .take(pagination.limit || 10);
 
+      const countQuery = this.investorRepo
+        .createQueryBuilder('investor')
+        .leftJoin(
+          'investor.mappings',
+          'mapping',
+          'mapping.is_active = :isActive',
+          { isActive: true },
+        )
+        .select('COUNT(DISTINCT investor.pan)', 'count');
+
+      // Tenant/Company boundary
+      if (access && access.companyId) {
+        query.andWhere('investor.company_id = :companyId', {
+          companyId: access.companyId,
+        });
+        countQuery.andWhere('investor.company_id = :companyId', {
+          companyId: access.companyId,
+        });
+      } else if (access && access.allowedCompanyIds) {
+        query.andWhere('investor.company_id IN (:...allowedCompanyIds)', {
+          allowedCompanyIds: access.allowedCompanyIds,
+        });
+        countQuery.andWhere('investor.company_id IN (:...allowedCompanyIds)', {
+          allowedCompanyIds: access.allowedCompanyIds,
+        });
+      }
+
+      // Hierarchy boundary
+      if (access && access.allowedSubBrokerIds) {
+        query.andWhere('mapping.sub_broker_id IN (:...allowedSubBrokerIds)', {
+          allowedSubBrokerIds: access.allowedSubBrokerIds,
+        });
+        countQuery.andWhere(
+          'mapping.sub_broker_id IN (:...allowedSubBrokerIds)',
+          { allowedSubBrokerIds: access.allowedSubBrokerIds },
+        );
+      }
+
       const data = await query.getMany();
-
-      const countResult = await this.investorRepo.createQueryBuilder('investor')
-        .select('COUNT(DISTINCT investor.pan)', 'count')
-        .getRawOne();
-
+      const countResult = await countQuery.getRawOne();
       const count = countResult ? parseInt(countResult.count, 10) : 0;
 
       return [data, count];
@@ -88,10 +138,7 @@ export class InvestorRepository extends BaseRepository<Investor> {
    */
   async findByUsernameOrEmail(identifier: string): Promise<Investor | null> {
     return this.investorRepo.findOne({
-      where: [
-        { username: identifier as any },
-        { email: identifier as any }
-      ]
+      where: [{ username: identifier as any }, { email: identifier as any }],
     });
   }
 
@@ -100,7 +147,7 @@ export class InvestorRepository extends BaseRepository<Investor> {
    */
   async findByEmail(email: string): Promise<Investor | null> {
     return this.investorRepo.findOne({
-      where: { email: email as any }
+      where: { email: email as any },
     });
   }
 
@@ -110,22 +157,68 @@ export class InvestorRepository extends BaseRepository<Investor> {
   async search(
     searchTerm: string,
     pagination: PaginationParams,
+    access?: any,
   ): Promise<[Investor[], number]> {
     try {
       const query = this.investorRepo.createQueryBuilder('investor');
+      const countQuery = this.investorRepo
+        .createQueryBuilder('investor')
+        .leftJoin(
+          'investor.mappings',
+          'mapping',
+          'mapping.is_active = :isActive',
+          { isActive: true },
+        )
+        .select('COUNT(DISTINCT investor.pan)', 'count');
 
       // Search condition
-      const whereClause = '(investor.investor_name ILIKE :search OR ' +
+      const whereClause =
+        '(investor.investor_name ILIKE :search OR ' +
         'investor.email ILIKE :search OR ' +
         'investor.mobile_no ILIKE :search OR ' +
         'investor.pan ILIKE :search)';
       const parameters = { search: `%${searchTerm}%` };
 
       query.where(whereClause, parameters);
+      countQuery.where(whereClause, parameters);
+
+      // Tenant/Company boundary
+      if (access && access.companyId) {
+        query.andWhere('investor.company_id = :companyId', {
+          companyId: access.companyId,
+        });
+        countQuery.andWhere('investor.company_id = :companyId', {
+          companyId: access.companyId,
+        });
+      } else if (access && access.allowedCompanyIds) {
+        query.andWhere('investor.company_id IN (:...allowedCompanyIds)', {
+          allowedCompanyIds: access.allowedCompanyIds,
+        });
+        countQuery.andWhere('investor.company_id IN (:...allowedCompanyIds)', {
+          allowedCompanyIds: access.allowedCompanyIds,
+        });
+      }
+
+      // Hierarchy boundary
+      if (access && access.allowedSubBrokerIds) {
+        query.andWhere('mapping.sub_broker_id IN (:...allowedSubBrokerIds)', {
+          allowedSubBrokerIds: access.allowedSubBrokerIds,
+        });
+        countQuery.andWhere(
+          'mapping.sub_broker_id IN (:...allowedSubBrokerIds)',
+          { allowedSubBrokerIds: access.allowedSubBrokerIds },
+        );
+      }
 
       // Use DISTINCT ON to return unique investors by PAN
       // Order by PAN first, then by created_at DESC for latest record
-      query.leftJoinAndSelect('investor.mappings', 'mapping', 'mapping.is_active = :isActive', { isActive: true })
+      query
+        .leftJoinAndSelect(
+          'investor.mappings',
+          'mapping',
+          'mapping.is_active = :isActive',
+          { isActive: true },
+        )
         .leftJoinAndSelect('mapping.sub_broker', 'sub_broker')
         .distinctOn(['investor.pan'])
         .orderBy('investor.pan', 'ASC')
@@ -137,11 +230,7 @@ export class InvestorRepository extends BaseRepository<Investor> {
       const data = await query.getMany();
 
       // Execute count query separately
-      // getManyAndCount() is problematic with distinctOn, so we calculate count manually
-      const countResult = await this.investorRepo.createQueryBuilder('investor')
-        .select('COUNT(DISTINCT investor.pan)', 'count')
-        .where(whereClause, parameters)
-        .getRawOne();
+      const countResult = await countQuery.getRawOne();
 
       const count = countResult ? parseInt(countResult.count, 10) : 0;
 
@@ -183,7 +272,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
 
       return investor?.static_details?.[0] || null;
     } catch (error) {
-      this.logger.error(`Error getting latest address for investor ${investorId}: ${error.message}`);
+      this.logger.error(
+        `Error getting latest address for investor ${investorId}: ${error.message}`,
+      );
       return null;
     }
   }
@@ -210,7 +301,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
         order: { created_at: 'DESC' },
       });
     } catch (error) {
-      this.logger.error(`Error finding investors by AMC code: ${error.message}`);
+      this.logger.error(
+        `Error finding investors by AMC code: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -334,15 +427,20 @@ export class InvestorRepository extends BaseRepository<Investor> {
    */
   async getLatestNAV(isin: string) {
     try {
-      const nav = await this.navHistoryRepo.createQueryBuilder('nav')
-        .where('nav.isinPayoutGrowth = :isin OR nav.isinReinvestment = :isin', { isin })
+      const nav = await this.navHistoryRepo
+        .createQueryBuilder('nav')
+        .where('nav.isinPayoutGrowth = :isin OR nav.isinReinvestment = :isin', {
+          isin,
+        })
         .orderBy('nav.navDate', 'DESC')
         .limit(1)
         .getOne();
 
       return nav || null;
     } catch (error) {
-      this.logger.error(`Error getting latest NAV for ISIN ${isin}: ${error.message}`);
+      this.logger.error(
+        `Error getting latest NAV for ISIN ${isin}: ${error.message}`,
+      );
       return null;
     }
   }
@@ -363,7 +461,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
         });
 
         if (scheme) {
-          this.logger.debug(`ISIN found by scheme name "${schemeName}": ${scheme.isin_no}`);
+          this.logger.debug(
+            `ISIN found by scheme name "${schemeName}": ${scheme.isin_no}`,
+          );
           return scheme.isin_no || null;
         }
       }
@@ -372,7 +472,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       if (schemeCode) {
         const schemeStr = String(schemeCode).toUpperCase();
 
-        this.logger.debug(`No scheme found by name, trying to match scheme code: ${schemeStr}`);
+        this.logger.debug(
+          `No scheme found by name, trying to match scheme code: ${schemeStr}`,
+        );
 
         // Query with LIKE pattern to find matching schemes
         // This handles variable-length amc_codes
@@ -392,11 +494,15 @@ export class InvestorRepository extends BaseRepository<Investor> {
       }
 
       if (!scheme || !scheme.isin_no) {
-        this.logger.debug(`No scheme or ISIN found for code: ${schemeCode}, name: ${schemeName}`);
+        this.logger.debug(
+          `No scheme or ISIN found for code: ${schemeCode}, name: ${schemeName}`,
+        );
         return null;
       }
 
-      this.logger.debug(`ISIN found for scheme ${schemeCode}: ${scheme.isin_no}`);
+      this.logger.debug(
+        `ISIN found for scheme ${schemeCode}: ${scheme.isin_no}`,
+      );
       return scheme.isin_no;
     } catch (error) {
       this.logger.error(`Error getting ISIN for scheme: ${error.message}`);
@@ -407,11 +513,17 @@ export class InvestorRepository extends BaseRepository<Investor> {
   /**
    * Get NAV history for a scheme within a date range
    */
-  async getNAVHistory(schemeCode: string | number, fromDate?: Date, toDate?: Date) {
+  async getNAVHistory(
+    schemeCode: string | number,
+    fromDate?: Date,
+    toDate?: Date,
+  ) {
     try {
-      let query = this.navHistoryRepo.createQueryBuilder('nav').where('nav.schemeCode = :schemeCode', {
-        schemeCode: String(schemeCode),
-      });
+      let query = this.navHistoryRepo
+        .createQueryBuilder('nav')
+        .where('nav.schemeCode = :schemeCode', {
+          schemeCode: String(schemeCode),
+        });
 
       if (fromDate) {
         query = query.andWhere('nav.navDate >= :fromDate', { fromDate });
@@ -424,7 +536,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       const navs = await query.orderBy('nav.navDate', 'ASC').getMany();
       return navs;
     } catch (error) {
-      this.logger.error(`Error getting NAV history for scheme ${schemeCode}: ${error.message}`);
+      this.logger.error(
+        `Error getting NAV history for scheme ${schemeCode}: ${error.message}`,
+      );
       return [];
     }
   }
@@ -434,8 +548,11 @@ export class InvestorRepository extends BaseRepository<Investor> {
    */
   async getNAVHistoryByISIN(isin: string, fromDate?: Date, toDate?: Date) {
     try {
-      let query = this.navHistoryRepo.createQueryBuilder('nav')
-        .where('nav.isinPayoutGrowth = :isin OR nav.isinReinvestment = :isin', { isin });
+      let query = this.navHistoryRepo
+        .createQueryBuilder('nav')
+        .where('nav.isinPayoutGrowth = :isin OR nav.isinReinvestment = :isin', {
+          isin,
+        });
 
       if (fromDate) {
         query = query.andWhere('nav.navDate >= :fromDate', { fromDate });
@@ -448,7 +565,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       const navs = await query.orderBy('nav.navDate', 'ASC').getMany();
       return navs;
     } catch (error) {
-      this.logger.error(`Error getting NAV history by ISIN ${isin}: ${error.message}`);
+      this.logger.error(
+        `Error getting NAV history by ISIN ${isin}: ${error.message}`,
+      );
       return [];
     }
   }
@@ -465,8 +584,12 @@ export class InvestorRepository extends BaseRepository<Investor> {
       const fiveDaysAgo = new Date(today);
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
 
-      const navs = await this.navHistoryRepo.createQueryBuilder('nav')
-        .where('(nav.isinPayoutGrowth = :isin OR nav.isinReinvestment = :isin)', { isin })
+      const navs = await this.navHistoryRepo
+        .createQueryBuilder('nav')
+        .where(
+          '(nav.isinPayoutGrowth = :isin OR nav.isinReinvestment = :isin)',
+          { isin },
+        )
         .andWhere('nav.navDate >= :fiveDaysAgo', { fiveDaysAgo })
         .orderBy('nav.navDate', 'DESC')
         .getMany();
@@ -506,7 +629,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       );
       return result;
     } catch (error) {
-      this.logger.error(`Error calculating 1-day NAV change for ISIN ${isin}: ${error.message}`);
+      this.logger.error(
+        `Error calculating 1-day NAV change for ISIN ${isin}: ${error.message}`,
+      );
       return null;
     }
   }
@@ -544,16 +669,12 @@ export class InvestorRepository extends BaseRepository<Investor> {
       if (transactions && transactions.length > 0) {
         // Extract all unique product codes from transactions
         const productCodes = new Set(
-          transactions
-            .map((t) => t.prodcode)
-            .filter(Boolean),
+          transactions.map((t) => t.prodcode).filter(Boolean),
         );
 
         // Extract all SIP transaction numbers from transactions
         const sipTransactionNumbers = new Set(
-          transactions
-            .map((t) => t.siptrxnno)
-            .filter(Boolean),
+          transactions.map((t) => t.siptrxnno).filter(Boolean),
         );
 
         this.logger.debug(
@@ -595,7 +716,8 @@ export class InvestorRepository extends BaseRepository<Investor> {
           // Strategy 3: Match by amc_code and scheme name (fallback)
           if (!isMatch && sip.amc_code === amcCode && sip.scheme) {
             const matchedTx = transactions.find(
-              (t) => t.scheme &&
+              (t) =>
+                t.scheme &&
                 t.scheme.toLowerCase().includes(sip.scheme.toLowerCase()),
             );
             if (matchedTx) {
@@ -665,12 +787,15 @@ export class InvestorRepository extends BaseRepository<Investor> {
         // Check if there are multiple types of transactions (SIP and lumpsum)
         const hasSIPTransaction = transactions.some((t) => t.siptrxnno);
         const hasLumpSumTransaction = transactions.some(
-          (t) => !t.siptrxnno && (t.trxntype === 'BUY' || t.trxntype === 'SIP' || t.trxntype === 'LUMPSUM'),
+          (t) =>
+            !t.siptrxnno &&
+            (t.trxntype === 'BUY' ||
+              t.trxntype === 'SIP' ||
+              t.trxntype === 'LUMPSUM'),
         );
 
         if (hasSIPTransaction && hasLumpSumTransaction) {
-          investmentType =
-            investmentType === 'STP' ? 'STP/MIXED' : 'SIP/MIXED';
+          investmentType = investmentType === 'STP' ? 'STP/MIXED' : 'SIP/MIXED';
         }
       }
 
@@ -720,7 +845,11 @@ export class InvestorRepository extends BaseRepository<Investor> {
    * Calculate XIRR (Extended Internal Rate of Return) for a holding
    * XIRR requires transaction history with amounts and dates
    */
-  async calculateXIRR(folio: string, schemeName?: string, currentValue?: number): Promise<number | null> {
+  async calculateXIRR(
+    folio: string,
+    schemeName?: string,
+    currentValue?: number,
+  ): Promise<number | null> {
     try {
       // Get all transactions for this folio and scheme, sorted by date
       const transactions = await this.transactionRepo.find({
@@ -732,7 +861,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       });
 
       if (!transactions || transactions.length === 0) {
-        this.logger.debug(`No transactions found for folio ${folio}, scheme ${schemeName}`);
+        this.logger.debug(
+          `No transactions found for folio ${folio}, scheme ${schemeName}`,
+        );
         return null;
       }
 
@@ -755,8 +886,12 @@ export class InvestorRepository extends BaseRepository<Investor> {
             if (txn.trxntype) {
               const txnTypeUpper = txn.trxntype.toUpperCase();
               // Redemptions/Sales are positive cash flow (money received)
-              if (txnTypeUpper.includes('SELL') || txnTypeUpper.includes('REDEEM') ||
-                txnTypeUpper.includes('SWITCH') || txnTypeUpper.includes('DIVIDEND')) {
+              if (
+                txnTypeUpper.includes('SELL') ||
+                txnTypeUpper.includes('REDEEM') ||
+                txnTypeUpper.includes('SWITCH') ||
+                txnTypeUpper.includes('DIVIDEND')
+              ) {
                 isInvestment = false;
               }
             }
@@ -785,7 +920,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       // Simple XIRR implementation using Newton-Raphson method
       const xirr = this.calculateXIRRIterative(cashFlows);
       if (xirr !== null) {
-        this.logger.debug(`XIRR calculated for folio ${folio}, scheme ${schemeName}: ${xirr}%`);
+        this.logger.debug(
+          `XIRR calculated for folio ${folio}, scheme ${schemeName}: ${xirr}%`,
+        );
       }
       return xirr;
     } catch (error) {
@@ -808,10 +945,12 @@ export class InvestorRepository extends BaseRepository<Investor> {
     if (cashFlows.length < 2) return null;
 
     // Check if all cash flows have the same sign (no real return if all in or all out)
-    const hasPositive = cashFlows.some(cf => cf.amount > 0);
-    const hasNegative = cashFlows.some(cf => cf.amount < 0);
+    const hasPositive = cashFlows.some((cf) => cf.amount > 0);
+    const hasNegative = cashFlows.some((cf) => cf.amount < 0);
     if (!hasPositive || !hasNegative) {
-      this.logger.debug('Cash flows do not have mixed signs, cannot calculate XIRR');
+      this.logger.debug(
+        'Cash flows do not have mixed signs, cannot calculate XIRR',
+      );
       return null;
     }
 
@@ -831,7 +970,8 @@ export class InvestorRepository extends BaseRepository<Investor> {
           cfDate = new Date(cfDate);
         }
 
-        const daysDiff = (cfDate.getTime() - baseDate.getTime()) / (1000 * 60 * 60 * 24);
+        const daysDiff =
+          (cfDate.getTime() - baseDate.getTime()) / (1000 * 60 * 60 * 24);
         const yearFraction = daysDiff / dayCount;
 
         // Avoid negative base for power calculation
@@ -846,7 +986,8 @@ export class InvestorRepository extends BaseRepository<Investor> {
         npv += cf.amount / discountFactor;
 
         if (discountFactor > 0) {
-          npvDerivative += (-yearFraction * cf.amount) / Math.pow(discountFactor, 2);
+          npvDerivative +=
+            (-yearFraction * cf.amount) / Math.pow(discountFactor, 2);
         }
       }
 
@@ -857,7 +998,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
 
       // Newton-Raphson update
       if (Math.abs(npvDerivative) < 1e-10) {
-        this.logger.debug('NPV derivative too small, cannot continue XIRR calculation');
+        this.logger.debug(
+          'NPV derivative too small, cannot continue XIRR calculation',
+        );
         return null;
       }
 
@@ -868,7 +1011,9 @@ export class InvestorRepository extends BaseRepository<Investor> {
       if (rate > 5) rate = 5;
     }
 
-    this.logger.debug(`XIRR calculation did not converge after ${maxIterations} iterations`);
+    this.logger.debug(
+      `XIRR calculation did not converge after ${maxIterations} iterations`,
+    );
     return Number((rate * 100).toFixed(2));
   }
 
@@ -885,10 +1030,13 @@ export class InvestorRepository extends BaseRepository<Investor> {
       // Group by relevant fields to see patterns
       const summary = {
         total_records: sipStpRecords.length,
-        unique_schemes: [...new Set(sipStpRecords.map(r => r.scheme))].length,
-        unique_folios: [...new Set(sipStpRecords.map(r => r.folio_no))].length,
-        aut_trntyp_values: [...new Set(sipStpRecords.map(r => r.aut_trntyp).filter(Boolean))],
-        sample_records: sipStpRecords.slice(0, 10).map(r => ({
+        unique_schemes: [...new Set(sipStpRecords.map((r) => r.scheme))].length,
+        unique_folios: [...new Set(sipStpRecords.map((r) => r.folio_no))]
+          .length,
+        aut_trntyp_values: [
+          ...new Set(sipStpRecords.map((r) => r.aut_trntyp).filter(Boolean)),
+        ],
+        sample_records: sipStpRecords.slice(0, 10).map((r) => ({
           id: r.id,
           folio_no: r.folio_no,
           scheme: r.scheme,
@@ -1007,24 +1155,31 @@ export class InvestorRepository extends BaseRepository<Investor> {
 
       // Filter transactions for this folio
       // amc_code matching is sometimes fuzzy in the original code, sticking to what was there
-      const transactions = allTransactions.filter(t => t.folio_no === folio && (!amcCode || t.amc_code === amcCode));
+      const transactions = allTransactions.filter(
+        (t) => t.folio_no === folio && (!amcCode || t.amc_code === amcCode),
+      );
 
       if (!transactions || transactions.length === 0) {
         return { investment_type: 'UNKNOWN', sip_status: 'N/A' };
       }
 
       // Unique product codes & SIP Trxn Nos
-      const productCodes = new Set(transactions.map((t) => t.prodcode).filter(Boolean));
-      const sipTransactionNumbers = new Set(transactions.map((t) => t.siptrxnno).filter(Boolean));
+      const productCodes = new Set(
+        transactions.map((t) => t.prodcode).filter(Boolean),
+      );
+      const sipTransactionNumbers = new Set(
+        transactions.map((t) => t.siptrxnno).filter(Boolean),
+      );
 
       // Filter SIPs for this folio
-      const sipStpRecords = allSipStp.filter(s => s.folio_no === folio);
+      const sipStpRecords = allSipStp.filter((s) => s.folio_no === folio);
 
       // Match logic (Same as original)
       for (const sip of sipStpRecords) {
         let isMatch = false;
 
-        if (sip.auto_trno && sipTransactionNumbers.has(sip.auto_trno)) isMatch = true;
+        if (sip.auto_trno && sipTransactionNumbers.has(sip.auto_trno))
+          isMatch = true;
 
         if (!isMatch && sip.amc_code && sip.scheme_code) {
           const sipProductCode = `${sip.amc_code}${sip.scheme_code}`;
@@ -1032,14 +1187,19 @@ export class InvestorRepository extends BaseRepository<Investor> {
         }
 
         if (!isMatch && sip.amc_code === amcCode && sip.scheme) {
-          const matchedTx = transactions.find(t => t.scheme && t.scheme.toLowerCase().includes(sip.scheme.toLowerCase()));
+          const matchedTx = transactions.find(
+            (t) =>
+              t.scheme &&
+              t.scheme.toLowerCase().includes(sip.scheme.toLowerCase()),
+          );
           if (matchedTx) isMatch = true;
         }
 
         if (isMatch) {
           hasSipForScheme = true;
           investmentType = 'SIP';
-          if (sip.aut_trntyp && sip.aut_trntyp.toUpperCase().includes('R')) investmentType = 'STP';
+          if (sip.aut_trntyp && sip.aut_trntyp.toUpperCase().includes('R'))
+            investmentType = 'STP';
 
           const today = new Date();
           today.setHours(0, 0, 0, 0);
@@ -1051,12 +1211,18 @@ export class InvestorRepository extends BaseRepository<Investor> {
             else if (sip.to_date) {
               const to = new Date(sip.to_date);
               to.setHours(0, 0, 0, 0);
-              sipStatus = to < today ? 'EXPIRED' : this.determineSipActiveStatus(sip, today);
+              sipStatus =
+                to < today
+                  ? 'EXPIRED'
+                  : this.determineSipActiveStatus(sip, today);
             } else sipStatus = this.determineSipActiveStatus(sip, today);
           } else if (sip.to_date) {
             const to = new Date(sip.to_date);
             to.setHours(0, 0, 0, 0);
-            sipStatus = to < today ? 'EXPIRED' : this.determineSipActiveStatus(sip, today);
+            sipStatus =
+              to < today
+                ? 'EXPIRED'
+                : this.determineSipActiveStatus(sip, today);
           } else if (sip.from_date) {
             sipStatus = this.determineSipActiveStatus(sip, today);
           }
@@ -1068,9 +1234,12 @@ export class InvestorRepository extends BaseRepository<Investor> {
         investmentType = 'LUMPSUM';
         sipStatus = 'N/A';
       } else if (hasSipForScheme && transactions.length > 1) {
-        const hasSIP = transactions.some(t => t.siptrxnno);
-        const hasLump = transactions.some(t => !t.siptrxnno && (['BUY', 'SIP', 'LUMPSUM'].includes(t.trxntype)));
-        if (hasSIP && hasLump) investmentType = investmentType === 'STP' ? 'STP/MIXED' : 'SIP/MIXED';
+        const hasSIP = transactions.some((t) => t.siptrxnno);
+        const hasLump = transactions.some(
+          (t) => !t.siptrxnno && ['BUY', 'SIP', 'LUMPSUM'].includes(t.trxntype),
+        );
+        if (hasSIP && hasLump)
+          investmentType = investmentType === 'STP' ? 'STP/MIXED' : 'SIP/MIXED';
       }
 
       return { investment_type: investmentType, sip_status: sipStatus };
@@ -1086,15 +1255,19 @@ export class InvestorRepository extends BaseRepository<Investor> {
     folio: string,
     schemeName: string,
     currentValue: number,
-    allTransactions: CamsInvestorTransaction[]
+    allTransactions: CamsInvestorTransaction[],
   ): number | null {
     try {
       // Filter transactions
-      const transactions = allTransactions.filter(t => t.folio_no === folio && t.scheme === schemeName);
-      // Sort by date 
+      const transactions = allTransactions.filter(
+        (t) => t.folio_no === folio && t.scheme === schemeName,
+      );
+      // Sort by date
       transactions.sort((a, b) => {
-        const da = a.traddate instanceof Date ? a.traddate : new Date(a.traddate);
-        const db = b.traddate instanceof Date ? b.traddate : new Date(b.traddate);
+        const da =
+          a.traddate instanceof Date ? a.traddate : new Date(a.traddate);
+        const db =
+          b.traddate instanceof Date ? b.traddate : new Date(b.traddate);
         return da.getTime() - db.getTime();
       });
 
@@ -1106,11 +1279,19 @@ export class InvestorRepository extends BaseRepository<Investor> {
         if (txn.traddate && txn.amount) {
           const amount = Number(txn.amount) || 0;
           if (amount !== 0) {
-            let txnDate = txn.traddate instanceof Date ? txn.traddate : new Date(txn.traddate);
+            let txnDate =
+              txn.traddate instanceof Date
+                ? txn.traddate
+                : new Date(txn.traddate);
             let isInvestment = true;
             if (txn.trxntype) {
               const t = txn.trxntype.toUpperCase();
-              if (t.includes('SELL') || t.includes('REDEEM') || t.includes('SWITCH') || t.includes('DIVIDEND')) {
+              if (
+                t.includes('SELL') ||
+                t.includes('REDEEM') ||
+                t.includes('SWITCH') ||
+                t.includes('DIVIDEND')
+              ) {
                 isInvestment = false;
               }
             }
@@ -1125,7 +1306,6 @@ export class InvestorRepository extends BaseRepository<Investor> {
       }
 
       return this.calculateXIRRIterative(cashFlows);
-
     } catch (error) {
       return null;
     }
@@ -1133,20 +1313,25 @@ export class InvestorRepository extends BaseRepository<Investor> {
   /**
    * Bulk fetch ISINs for multiple schemes (Optimization)
    */
-  async getISINsBySchemes(schemes: { amc_code?: string; sch_code?: string; sch_name?: string }[]): Promise<Map<string, string>> {
+  async getISINsBySchemes(
+    schemes: { amc_code?: string; sch_code?: string; sch_name?: string }[],
+  ): Promise<Map<string, string>> {
     try {
       const schemeMap = new Map<string, string>();
       if (schemes.length === 0) return schemeMap;
 
-      const schemeNames = schemes.map(s => s.sch_name).filter(Boolean) as string[];
+      const schemeNames = schemes
+        .map((s) => s.sch_name)
+        .filter(Boolean) as string[];
 
       // 1. Fetch by Scheme Names (Primary)
       if (schemeNames.length > 0) {
-        const schemesFound = await this.schemeRepo.createQueryBuilder('s')
+        const schemesFound = await this.schemeRepo
+          .createQueryBuilder('s')
           .where('s.sch_name IN (:...names)', { names: schemeNames })
           .getMany();
 
-        schemesFound.forEach(s => {
+        schemesFound.forEach((s) => {
           if (s.sch_name && s.isin_no) {
             schemeMap.set(s.sch_name, s.isin_no);
           }
@@ -1163,10 +1348,13 @@ export class InvestorRepository extends BaseRepository<Investor> {
   /**
    * Bulk fetch Latest NAVs and Yesterday's NAVs for multiple ISINs
    */
-  async getNAVsByISINs(isins: string[]): Promise<{ current: Map<string, number>, yesterday: Map<string, number> }> {
+  async getNAVsByISINs(
+    isins: string[],
+  ): Promise<{ current: Map<string, number>; yesterday: Map<string, number> }> {
     try {
       const uniqueIsins = [...new Set(isins)].filter(Boolean);
-      if (uniqueIsins.length === 0) return { current: new Map(), yesterday: new Map() };
+      if (uniqueIsins.length === 0)
+        return { current: new Map(), yesterday: new Map() };
 
       const currentMap = new Map<string, number>();
       const yesterdayMap = new Map<string, number>();
@@ -1175,11 +1363,12 @@ export class InvestorRepository extends BaseRepository<Investor> {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      const recentNavs = await this.navHistoryRepo.createQueryBuilder('nav')
+      const recentNavs = await this.navHistoryRepo
+        .createQueryBuilder('nav')
         .where('nav.navDate >= :sevenDaysAgo', { sevenDaysAgo })
         .andWhere(
           '(nav.isinPayoutGrowth IN (:...isins) OR nav.isinReinvestment IN (:...isins))',
-          { isins: uniqueIsins }
+          { isins: uniqueIsins },
         )
         .orderBy('nav.navDate', 'DESC')
         .getMany();
@@ -1188,7 +1377,7 @@ export class InvestorRepository extends BaseRepository<Investor> {
       // Group by ISIN
       const navsByIsin = new Map<string, NavHistory[]>();
 
-      recentNavs.forEach(nav => {
+      recentNavs.forEach((nav) => {
         const isin1 = nav.isinPayoutGrowth;
         const isin2 = nav.isinReinvestment;
 
@@ -1205,7 +1394,10 @@ export class InvestorRepository extends BaseRepository<Investor> {
 
       navsByIsin.forEach((navs, isin) => {
         // Sort desc
-        navs.sort((a, b) => new Date(b.navDate).getTime() - new Date(a.navDate).getTime());
+        navs.sort(
+          (a, b) =>
+            new Date(b.navDate).getTime() - new Date(a.navDate).getTime(),
+        );
 
         if (navs.length > 0) {
           const latest = navs[0];
@@ -1222,7 +1414,6 @@ export class InvestorRepository extends BaseRepository<Investor> {
       });
 
       return { current: currentMap, yesterday: yesterdayMap };
-
     } catch (error) {
       this.logger.error(`Error bulk fetching NAVs: ${error.message}`);
       return { current: new Map(), yesterday: new Map() };

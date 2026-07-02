@@ -139,10 +139,12 @@ export class BrokerageDistributionService {
   /**
    * Lists all sub-brokers for a given company based on investor mappings
    */
-  async getSubBrokers(companyId: string) {
+  async getSubBrokers(
+    access: import('src/common/services/hierarchy-access.service').HierarchyAccessContext,
+  ) {
     // We use the query provided by the user to get sub-brokers and their mappings
     // Grouping by Sub Broker ID to provide a clean list
-    const query = `
+    let query = `
             SELECT 
                 s.id,
                 s.name,
@@ -153,12 +155,21 @@ export class BrokerageDistributionService {
             LEFT JOIN commission_mappings c ON c.sub_broker_id = s.id
             LEFT JOIN investor_mappings i ON i.sub_broker_id = s.id
             LEFT JOIN investors inv ON i.investor_id = inv.id
-            WHERE s.company_id = $1 OR s.company_id IS NULL
+            WHERE (s.company_id = $1 OR s.company_id IS NULL)
+        `;
+
+    const params: any[] = [access.companyId];
+    if (access.allowedSubBrokerIds) {
+      query += ` AND s.id = ANY($2)`;
+      params.push(access.allowedSubBrokerIds);
+    }
+
+    query += `
             GROUP BY s.id, s.name, s.arn_id
             ORDER BY s.name ASC
         `;
 
-    const data = await this.subBrokerRepo.query(query, [companyId]);
+    const data = await this.subBrokerRepo.query(query, params);
     return { data };
   }
 
@@ -182,13 +193,13 @@ export class BrokerageDistributionService {
   }
 
   async getSubBrokerAmcAggregation(
-    companyId: string,
+    access: import('src/common/services/hierarchy-access.service').HierarchyAccessContext,
     fromDate: string,
     toDate: string,
   ) {
     // Reuse the detailed logic but map it to the response format expected by this legacy endpoint
     const detailedData = await this.getDetailedBrokerageDistribution(
-      companyId,
+      access,
       fromDate,
       toDate,
       'amc',
@@ -240,11 +251,15 @@ export class BrokerageDistributionService {
    * It incorporates CAMS/Karvy raw data, sharing hierarchies, and window functions for report totals.
    */
   async getDetailedBrokerageDistribution(
-    companyId: string,
+    access: import('src/common/services/hierarchy-access.service').HierarchyAccessContext,
     fromDate: string,
     toDate: string,
     groupBy: 'amc' | 'investor' = 'amc',
   ) {
+    const hierarchyFilter = access.allowedSubBrokerIds
+      ? 'AND sb.id = ANY($4)'
+      : '';
+
     const amcQuery = `
         WITH broker_hierarchy AS (
             SELECT
@@ -263,7 +278,7 @@ export class BrokerageDistributionService {
             LEFT JOIN commission_mappings cm
                 ON  cm.broker_id     = sb.parent_id
                 AND cm.sub_broker_id = sb.id
-            WHERE sb.company_id = $1
+            WHERE sb.company_id = $1 ${hierarchyFilter}
         ),
         combined AS (
             -- CAMS
@@ -384,7 +399,7 @@ export class BrokerageDistributionService {
             FROM sub_brokers sb
             LEFT JOIN sub_brokers main_sb ON main_sb.id = sb.parent_id
             LEFT JOIN commission_mappings cm ON cm.broker_id = sb.parent_id AND cm.sub_broker_id = sb.id
-            WHERE sb.company_id = $1
+            WHERE sb.company_id = $1 ${hierarchyFilter}
         ),
         combined AS (
             SELECT
@@ -474,11 +489,13 @@ export class BrokerageDistributionService {
         `;
 
     const query = groupBy === 'investor' ? investorQuery : amcQuery;
-    const rawData = await this.dataSource.query(query, [
-      companyId,
-      fromDate,
-      toDate,
-    ]);
+
+    const params: any[] = [access.companyId, fromDate, toDate];
+    if (access.allowedSubBrokerIds) {
+      params.push(access.allowedSubBrokerIds);
+    }
+
+    const rawData = await this.dataSource.query(query, params);
 
     if (!rawData.length || !rawData[0].sub_brokers) {
       return {

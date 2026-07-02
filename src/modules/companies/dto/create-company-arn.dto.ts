@@ -1,52 +1,63 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsNumber, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsNumber,
+  IsArray,
+} from 'class-validator';
 
 export class CreateCompanyArnDto {
-    @IsString()
-    @IsNotEmpty()
-    arn_no: string;
+  @IsString()
+  @IsNotEmpty()
+  arn_no: string;
 
-    @IsString()
-    @IsOptional()
-    euin?: string;
+  @IsString()
+  @IsOptional()
+  euin?: string;
 
-    @IsString()
-    @IsOptional()
-    email?: string;
+  @IsString()
+  @IsOptional()
+  email?: string;
 
-    @IsString()
-    @IsOptional()
-    phone?: string;
+  @IsString()
+  @IsOptional()
+  phone_number?: string;
 
-    @IsString()
-    @IsOptional()
-    email_host?: string;
+  @IsString()
+  @IsOptional()
+  distributor_name?: string;
 
-    @IsNumber()
-    @IsOptional()
-    email_port?: number;
+  @IsString()
+  @IsOptional()
+  email_host?: string;
 
-    @IsString()
-    @IsOptional()
-    email_user?: string;
+  @IsNumber()
+  @IsOptional()
+  email_port?: number;
 
-    @IsString()
-    @IsOptional()
-    email_password?: string;
+  @IsString()
+  @IsOptional()
+  email_user?: string;
 
-    @IsBoolean()
-    @IsOptional()
-    email_use_ssl?: boolean;
+  @IsString()
+  @IsOptional()
+  email_password?: string;
 
-    @IsString()
-    @IsOptional()
-    cams_zip_password?: string;
+  @IsBoolean()
+  @IsOptional()
+  email_use_ssl?: boolean;
 
-    @IsArray()
-    @IsOptional()
-    credentials?: {
-        source: string;
-        mailback_pass?: string | null;
-        camsonline_pass?: string | null;
-        fundsnet_pass?: string | null;
-    }[];
+  @IsString()
+  @IsOptional()
+  cams_zip_password?: string;
+
+  @IsArray()
+  @IsOptional()
+  credentials?: {
+    source: string;
+    mailback_pass?: string | null;
+    camsonline_pass?: string | null;
+    fundsnet_pass?: string | null;
+  }[];
 }

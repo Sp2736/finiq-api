@@ -202,14 +202,23 @@ export class UserManagementService {
     };
   }
 
-  async getAllUsers(userSnapshot?: any) {
-    const companyId =
-      userSnapshot?.roles?.find((r: any) => r.company_id)?.company_id ||
-      userSnapshot?.company_id;
+  async getAllUsers(
+    access: import('src/common/services/hierarchy-access.service').HierarchyAccessContext,
+  ) {
+    const whereCondition: any = {};
+    if (access.companyId) {
+      whereCondition.company_id = access.companyId;
+    } else if (access.allowedCompanyIds) {
+      whereCondition.company_id = In(access.allowedCompanyIds);
+    }
+
+    if (access.allowedSubBrokerIds) {
+      whereCondition.id = In(access.allowedSubBrokerIds);
+    }
 
     // 1. Fetch brokers
     let brokers = await this.subBrokerRepo.find({
-      where: companyId ? { company_id: companyId } : undefined,
+      where: whereCondition,
       relations: ['parent'],
       order: { created_at: 'ASC' },
     });
@@ -222,8 +231,15 @@ export class UserManagementService {
     });
 
     // 3. Fetch UserProfiles & Users to get cross-table data (phone & email)
+    const profileWhere: any = {};
+    if (access.companyId) {
+      profileWhere.company_id = access.companyId;
+    } else if (access.allowedCompanyIds) {
+      profileWhere.company_id = In(access.allowedCompanyIds);
+    }
+
     const profiles = await this.userProfileRepo.find({
-      where: companyId ? { company_id: companyId } : undefined,
+      where: profileWhere,
       relations: ['user'],
     });
 
@@ -285,13 +301,22 @@ export class UserManagementService {
     };
   }
 
-  async getHierarchy(userSnapshot?: any) {
-    const companyId =
-      userSnapshot?.roles?.find((r: any) => r.company_id)?.company_id ||
-      userSnapshot?.company_id;
+  async getHierarchy(
+    access: import('src/common/services/hierarchy-access.service').HierarchyAccessContext,
+  ) {
+    const whereCondition: any = {};
+    if (access.companyId) {
+      whereCondition.company_id = access.companyId;
+    } else if (access.allowedCompanyIds) {
+      whereCondition.company_id = In(access.allowedCompanyIds);
+    }
+
+    if (access.allowedSubBrokerIds) {
+      whereCondition.id = In(access.allowedSubBrokerIds);
+    }
 
     const brokers = await this.subBrokerRepo.find({
-      where: companyId ? { company_id: companyId } : undefined,
+      where: whereCondition,
       relations: ['parent', 'children'],
     });
 

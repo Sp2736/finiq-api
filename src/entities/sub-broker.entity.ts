@@ -7,11 +7,14 @@ import {
   ManyToOne,
   JoinColumn,
   OneToMany,
+  Index,
 } from 'typeorm';
 import { InvestorMapping } from './investor-mapping.entity';
 import { User } from './user.entity';
 
 @Entity('sub_brokers')
+@Index('idx_sub_brokers_company_id', ['company_id'])
+@Index('idx_sub_brokers_parent_id', ['parent_id'])
 export class SubBroker {
   @PrimaryGeneratedColumn('uuid')
   id: string;

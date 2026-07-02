@@ -15,13 +15,20 @@ import { RoleGuard } from 'src/common/guards/role.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { UserRole } from 'src/entities/user-profile.entity';
 import { ApiErrorCode, ErrorMessages } from 'src/common/constants/error-codes';
+import { HierarchyAccessService } from 'src/common/services/hierarchy-access.service';
 
 @Controller('api/brokerage-distribution')
 @UseGuards(JwtAuthGuard, RoleGuard)
-@Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN)
+@Roles(
+  UserRole.COMPANY_ADMIN,
+  UserRole.FINIQ_ADMIN,
+  UserRole.BROKER,
+  UserRole.SUB_BROKER,
+)
 export class BrokerageDistributionController {
   constructor(
     private readonly distributionService: BrokerageDistributionService,
+    private readonly hierarchyAccess: HierarchyAccessService,
   ) {}
 
   @Get('hierarchy')
@@ -40,12 +47,15 @@ export class BrokerageDistributionController {
   }
 
   @Get('sub-brokers')
-  async getSubBrokers(@Query('companyId') companyId: string) {
-    return this.distributionService.getSubBrokers(companyId);
+  async getSubBrokers(@Req() req: any) {
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
+    return this.distributionService.getSubBrokers(access);
   }
 
   @Get('subbroker/:id/amc-breakdown')
-  async getSubBrokerBreakdown(@Param('id') id: string) {
+  async getSubBrokerBreakdown(@Param('id') id: string, @Req() req: any) {
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
+    this.hierarchyAccess.assertSubBrokerAllowed(access, id);
     return this.distributionService.getBrokerAmcBreakdown(id);
   }
 
@@ -68,16 +78,9 @@ export class BrokerageDistributionController {
         ErrorMessages[ApiErrorCode.QUERY_PARAMS_REQUIRED],
       );
     }
-    const companyId =
-      req.user?.roles?.find((r: any) => r.company_id)?.company_id ||
-      req.user?.company_id;
-    if (!companyId) {
-      throw new BadRequestException(
-        ErrorMessages[ApiErrorCode.COMPANY_ID_NOT_FOUND],
-      );
-    }
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
     return this.distributionService.getSubBrokerAmcAggregation(
-      companyId,
+      access,
       fromDate,
       toDate,
     );
@@ -95,11 +98,9 @@ export class BrokerageDistributionController {
         ErrorMessages[ApiErrorCode.QUERY_PARAMS_REQUIRED],
       );
     }
-    const companyId =
-      req.user?.roles?.find((r: any) => r.company_id)?.company_id ||
-      req.user?.company_id;
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
     return this.distributionService.getDetailedBrokerageDistribution(
-      companyId,
+      access,
       fromDate,
       toDate,
       groupBy,

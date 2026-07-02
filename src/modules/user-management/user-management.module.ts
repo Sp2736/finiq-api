@@ -10,20 +10,23 @@ import { UserProfile } from '../../entities/user-profile.entity';
 import { InvestorMapping } from '../../entities/investor-mapping.entity';
 import { CompanyArn } from '../../entities/company-arn.entity';
 
-@Module({
-    imports: [
-        TypeOrmModule.forFeature([
-            SubBroker,
-            Investor,
-            CommissionMapping,
-            UserProfile,
-            InvestorMapping,
-            CompanyArn
-        ]),
-    ],
+import { CommonModule } from 'src/common/common.module';
 
-    controllers: [UserManagementController],
-    providers: [UserManagementService],
-    exports: [UserManagementService],
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      SubBroker,
+      Investor,
+      CommissionMapping,
+      UserProfile,
+      InvestorMapping,
+      CompanyArn,
+    ]),
+    CommonModule,
+  ],
+
+  controllers: [UserManagementController],
+  providers: [UserManagementService],
+  exports: [UserManagementService],
 })
-export class UserManagementModule { }
+export class UserManagementModule {}

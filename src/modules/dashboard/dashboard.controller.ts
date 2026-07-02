@@ -1,103 +1,66 @@
-import { Controller, Get, Query, HttpCode, HttpStatus, UseGuards, Request, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Request,
+  Logger,
+} from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { ResponseFormatter } from 'src/common';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
-import { RoleGuard } from 'src/common/guards/role.guard';
-import { Roles } from 'src/common/decorators/roles.decorator';
-import { UserRole } from 'src/entities/user-profile.entity';
+import { HierarchyAccessService } from 'src/common/services/hierarchy-access.service';
 
 @Controller('api/dashboard')
 @UseGuards(JwtAuthGuard)
 export class DashboardController {
-    private readonly logger = new Logger(DashboardController.name);
+  private readonly logger = new Logger(DashboardController.name);
 
-    constructor(private readonly dashboardService: DashboardService) { }
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly hierarchyAccess: HierarchyAccessService,
+  ) {}
 
-    // ────────────── Admin Endpoints ──────────────
+  @Get('summary')
+  @HttpCode(HttpStatus.OK)
+  async getSummary(@Request() req: any) {
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
+    this.logger.debug(
+      `Dashboard summary requested for company: ${access.companyId}`,
+    );
+    const result = await this.dashboardService.getSummary(access);
+    return ResponseFormatter.success(result, 'Dashboard summary retrieved');
+  }
 
-    @Get('admin/summary')
-    @UseGuards(RoleGuard)
-    @Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN)
-    @HttpCode(HttpStatus.OK)
-    async getAdminSummary(@Request() req: any) {
-        const companyId = this.getCompanyId(req.user);
-        this.logger.debug(`Admin summary requested for company: ${companyId}`);
-        const result = await this.dashboardService.getAdminSummary(companyId);
-        return ResponseFormatter.success(result, 'Admin dashboard summary retrieved');
-    }
+  @Get('aum-trend')
+  @HttpCode(HttpStatus.OK)
+  async getAumTrend(@Request() req: any, @Query('months') months?: number) {
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
+    const result = await this.dashboardService.getAumTrend(
+      access,
+      months || 12,
+    );
+    return ResponseFormatter.success(result, 'AUM trend data retrieved');
+  }
 
-    @Get('admin/aum-trend')
-    @UseGuards(RoleGuard)
-    @Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN)
-    @HttpCode(HttpStatus.OK)
-    async getAumTrend(@Request() req: any, @Query('months') months?: number) {
-        const companyId = this.getCompanyId(req.user);
-        const result = await this.dashboardService.getAumTrend(companyId, months || 12);
-        return ResponseFormatter.success(result, 'AUM trend data retrieved');
-    }
+  @Get('portfolio-distribution')
+  @HttpCode(HttpStatus.OK)
+  async getPortfolioDistribution(@Request() req: any) {
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
+    const result = await this.dashboardService.getPortfolioDistribution(access);
+    return ResponseFormatter.success(
+      result,
+      'Portfolio distribution retrieved',
+    );
+  }
 
-    @Get('admin/portfolio-distribution')
-    @UseGuards(RoleGuard)
-    @Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN)
-    @HttpCode(HttpStatus.OK)
-    async getPortfolioDistribution(@Request() req: any) {
-        const companyId = this.getCompanyId(req.user);
-        const result = await this.dashboardService.getPortfolioDistribution(companyId);
-        return ResponseFormatter.success(result, 'Portfolio distribution retrieved');
-    }
-
-    // ────────────── Broker Endpoints ──────────────
-
-    @Get('broker/summary')
-    @UseGuards(RoleGuard)
-    @Roles(UserRole.BROKER, UserRole.SUB_BROKER, UserRole.COMPANY_USER)
-    @HttpCode(HttpStatus.OK)
-    async getBrokerSummary(@Request() req: any) {
-        const { userProfileId, companyId } = this.getBrokerContext(req.user);
-        const result = await this.dashboardService.getBrokerSummary(userProfileId, companyId);
-        return ResponseFormatter.success(result, 'Broker dashboard summary retrieved');
-    }
-
-    @Get('broker/client-stats')
-    @UseGuards(RoleGuard)
-    @Roles(UserRole.BROKER, UserRole.SUB_BROKER, UserRole.COMPANY_USER)
-    @HttpCode(HttpStatus.OK)
-    async getBrokerClientStats(@Request() req: any) {
-        const { userProfileId, companyId } = this.getBrokerContext(req.user);
-        const result = await this.dashboardService.getBrokerClientStats(userProfileId, companyId);
-        return ResponseFormatter.success(result, 'Broker client stats retrieved');
-    }
-
-    @Get('broker/performance')
-    @UseGuards(RoleGuard)
-    @Roles(UserRole.BROKER, UserRole.SUB_BROKER, UserRole.COMPANY_USER)
-    @HttpCode(HttpStatus.OK)
-    async getBrokerPerformance(@Request() req: any) {
-        const { userProfileId, companyId } = this.getBrokerContext(req.user);
-        const result = await this.dashboardService.getBrokerPerformance(userProfileId, companyId);
-        return ResponseFormatter.success(result, 'Broker performance data retrieved');
-    }
-
-    // ────────────── Helpers ──────────────
-
-    private getCompanyId(user: any): string {
-        if (!user?.roles?.length) {
-            throw new Error('User has no roles');
-        }
-        return user.roles[0].company_id;
-    }
-
-    private getBrokerContext(user: any): { userProfileId: string; companyId: string } {
-        if (!user?.roles?.length) {
-            throw new Error('User has no roles');
-        }
-        const brokerRole = user.roles.find((r: any) =>
-            [UserRole.BROKER, UserRole.SUB_BROKER, UserRole.COMPANY_USER].includes(r.role)
-        ) || user.roles[0];
-
-        return {
-            userProfileId: user.id, // Will need user_profile_id from JWT or lookup
-            companyId: brokerRole.company_id,
-        };
-    }
+  @Get('performance')
+  @HttpCode(HttpStatus.OK)
+  async getPerformance(@Request() req: any) {
+    const access = await this.hierarchyAccess.resolveAccess(req.user);
+    const result = await this.dashboardService.getPerformance(access);
+    return ResponseFormatter.success(result, 'Performance data retrieved');
+  }
 }

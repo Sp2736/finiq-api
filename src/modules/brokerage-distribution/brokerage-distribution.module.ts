@@ -10,20 +10,23 @@ import { CamsBrokerageData } from '../../entities/cams-brokerage-data.entity';
 import { InvestorMapping } from '../../entities/investor-mapping.entity';
 import { KarvyBrokerageData } from '../../entities/karvy-brokerage-data.entity';
 
+import { CommonModule } from 'src/common/common.module';
+
 @Module({
-    imports: [
-        TypeOrmModule.forFeature([
-            SubBroker,
-            CommissionMapping,
-            ClientMapping,
-            BrokerageLedger,
-            CamsBrokerageData,
-            InvestorMapping,
-            KarvyBrokerageData,
-        ]),
-    ],
-    controllers: [BrokerageDistributionController],
-    providers: [BrokerageDistributionService],
-    exports: [BrokerageDistributionService],
+  imports: [
+    TypeOrmModule.forFeature([
+      SubBroker,
+      CommissionMapping,
+      ClientMapping,
+      BrokerageLedger,
+      CamsBrokerageData,
+      InvestorMapping,
+      KarvyBrokerageData,
+    ]),
+    CommonModule,
+  ],
+  controllers: [BrokerageDistributionController],
+  providers: [BrokerageDistributionService],
+  exports: [BrokerageDistributionService],
 })
-export class BrokerageDistributionModule { }
+export class BrokerageDistributionModule {}
