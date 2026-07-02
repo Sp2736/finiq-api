@@ -115,6 +115,7 @@ export class AuthenticationService {
       .update(refreshToken)
       .digest('hex');
     if (user.refresh_token !== hashedToken) {
+      this.logger.error(`Refresh token mismatch for user ${userId}. Received token: ${refreshToken}, hashed received: ${hashedToken}, expected hash in DB: ${user.refresh_token}`);
       // Token mismatch - possible token theft, clear all tokens
       await this.repository.clearRefreshToken(userId);
       throw new UnauthorizedException(
@@ -132,7 +133,7 @@ export class AuthenticationService {
     }
 
     const profiles = await this.repository.findUserProfiles(user.id);
-    return await this.generateAuthResponse(user, profiles);
+    return await this.generateAuthResponse(user, profiles, refreshToken);
   }
 
   async logout(userId: string) {
@@ -162,7 +163,11 @@ export class AuthenticationService {
   /**
    * Common method to generate JWT and Refresh Token response
    */
-  private async generateAuthResponse(user: User, profiles: UserProfile[]) {
+  private async generateAuthResponse(
+    user: User,
+    profiles: UserProfile[],
+    existingRefreshToken?: string,
+  ) {
     const roles = UserMapper.mapRoles(profiles);
 
     // Use company_id from the user's profile (from user_profiles table) — most reliable source.
@@ -211,23 +216,31 @@ export class AuthenticationService {
 
     const accessTokenExpiry =
       this.configService.get<string>('JWT_ACCESS_TOKEN_EXPIRATION') || '24h';
-    const refreshExpiryDays =
-      this.configService.get<number>('JWT_REFRESH_TOKEN_EXPIRATION_DAYS') || 7;
 
-    // Generate tokens
+    // Generate token
     const access_token = this.jwtService.sign(payload as any, {
       expiresIn: accessTokenExpiry as any,
     });
-    const refresh_token = crypto.randomBytes(64).toString('hex');
-    const refreshExpiresAt = new Date(
-      Date.now() + refreshExpiryDays * 24 * 60 * 60 * 1000,
-    );
 
-    await this.repository.saveRefreshToken(
-      user.id,
-      refresh_token,
-      refreshExpiresAt,
-    );
+    let refresh_token = existingRefreshToken;
+
+    if (!refresh_token) {
+      const refreshExpiryDays =
+        this.configService.get<number>('JWT_REFRESH_TOKEN_EXPIRATION_DAYS') || 7;
+      refresh_token = crypto.randomBytes(64).toString('hex');
+      const refreshExpiresAt = new Date(
+        Date.now() + refreshExpiryDays * 24 * 60 * 60 * 1000,
+      );
+
+      await this.repository.saveRefreshToken(
+        user.id,
+        refresh_token,
+        refreshExpiresAt,
+      );
+    } else {
+      // If reusing the refresh token, just update the last login time
+      await this.repository.updateLastLogin(user.id);
+    }
 
     return {
       access_token,
