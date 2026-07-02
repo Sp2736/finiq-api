@@ -7,6 +7,8 @@ import { UserProfile } from 'src/entities/user-profile.entity';
 import * as crypto from 'crypto';
 import { CompanyDetail } from 'src/entities/company-detail.entity';
 
+import { SubBroker } from 'src/entities/sub-broker.entity';
+
 @Injectable()
 export class AuthenticationRepository {
   private readonly logger = new Logger(AuthenticationRepository.name);
@@ -20,6 +22,8 @@ export class AuthenticationRepository {
     private readonly userProfileRepo: Repository<UserProfile>,
     @InjectRepository(CompanyDetail)
     private readonly companyDetailRepo: Repository<CompanyDetail>,
+    @InjectRepository(SubBroker)
+    private readonly subBrokerRepo: Repository<SubBroker>,
   ) {}
 
   async findCompanyDetail(companyId: string): Promise<CompanyDetail | null> {
@@ -74,6 +78,10 @@ export class AuthenticationRepository {
       .addSelect('user.refresh_token')
       .where('user.id = :id', { id: userId })
       .getOne();
+  }
+
+  async findSubBrokerByUserId(userId: string): Promise<SubBroker | null> {
+    return this.subBrokerRepo.findOne({ where: { user_id: userId } });
   }
 
   async createUser(phoneNumber: string): Promise<User> {

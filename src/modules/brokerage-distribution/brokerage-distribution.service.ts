@@ -14,6 +14,7 @@ import { SubBroker } from '../../entities/sub-broker.entity';
 import { CommissionMapping } from '../../entities/commission-mapping.entity';
 import { ClientMapping } from '../../entities/client-mapping.entity';
 import { BrokerageLedger } from '../../entities/brokerage-ledger.entity';
+import { logAndSanitize } from '../../common/utils/safe-error';
 import { CamsBrokerageData } from '../../entities/cams-brokerage-data.entity';
 import { InvestorMapping } from '../../entities/investor-mapping.entity';
 import { KarvyBrokerageData } from '../../entities/karvy-brokerage-data.entity';
@@ -527,9 +528,13 @@ export class BrokerageDistributionService {
       const result = await this.dataSource.query(query, values);
       return { success: true, data: result[0] };
     } catch (error) {
-      this.logger.error(`Failed to add ledger entry: ${error.message}`);
       throw new InternalServerErrorException(
-        error.message || 'Failed to record ledger entry',
+        logAndSanitize(
+          this.logger,
+          'Failed to add ledger entry',
+          error,
+          'Failed to record ledger entry. Please try again.',
+        ),
       );
     }
   }

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { KarvySchemeDetail } from 'src/entities';
 import * as xlsx from 'xlsx';
+import { logAndSanitize } from '../../common/utils/safe-error';
 
 @Injectable()
 export class KarvySchemeDetailsService {
@@ -146,8 +147,9 @@ export class KarvySchemeDetailsService {
             };
 
         } catch (error) {
-            this.logger.error(`Error processing Karvy Scheme Excel: ${error.message}`);
-            throw new BadRequestException(`Failed to parse file: ${error.message}`);
+            throw new BadRequestException(
+                logAndSanitize(this.logger, 'Error processing Karvy Scheme Excel', error, 'Failed to parse file. Please try again.')
+            );
         }
     }
 }

@@ -116,6 +116,7 @@ export class UserManagementService {
         parent_id: parentId,
         path: path || undefined,
         company_id: dto.company_id,
+        user_id: savedUser.id,
       } as any);
 
       const savedBroker = await manager.save(SubBroker, subBroker);
@@ -344,15 +345,25 @@ export class UserManagementService {
 
       // Handle parent change (re-parenting) logic...
       if (dto.parent_id !== undefined) {
-        const newParentId = dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null;
-        if (newParentId === id) throw new BadRequestException('A broker cannot be its own parent');
+        const newParentId =
+          dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null;
+        if (newParentId === id)
+          throw new BadRequestException('A broker cannot be its own parent');
         if (newParentId) {
           const isDescendant = await this.isDescendantOf(newParentId, id);
-          if (isDescendant) throw new BadRequestException('Cannot set a descendant as parent (circular hierarchy)');
-          const newParent = await manager.findOne(SubBroker, { where: { id: newParentId } });
-          if (!newParent) throw new NotFoundException('New parent broker not found');
+          if (isDescendant)
+            throw new BadRequestException(
+              'Cannot set a descendant as parent (circular hierarchy)',
+            );
+          const newParent = await manager.findOne(SubBroker, {
+            where: { id: newParentId },
+          });
+          if (!newParent)
+            throw new NotFoundException('New parent broker not found');
           updateData.parent_id = newParentId;
-          updateData.path = newParent.path ? `${newParent.path}/${newParent.id}` : newParent.id;
+          updateData.path = newParent.path
+            ? `${newParent.path}/${newParent.id}`
+            : newParent.id;
         } else {
           updateData.parent_id = null as any;
           updateData.path = '' as any;
@@ -376,14 +387,16 @@ export class UserManagementService {
           if (dto.name !== undefined) {
             const nameParts = dto.name.trim().split(' ');
             profile.first_name = nameParts[0];
-            profile.last_name = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+            profile.last_name =
+              nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
           }
           if (dto.email !== undefined) profile.email = dto.email;
           await manager.save(UserProfile, profile);
 
           // Update root User Phone Number & Email
           if (profile.user) {
-            if (dto.phone_number !== undefined) profile.user.phone_number = dto.phone_number;
+            if (dto.phone_number !== undefined)
+              profile.user.phone_number = dto.phone_number;
             if (dto.email !== undefined) profile.user.email = dto.email;
             await manager.save(User, profile.user);
           }
@@ -392,22 +405,37 @@ export class UserManagementService {
 
       // 3. Update commission share percentage
       if (dto.share_percentage !== undefined) {
-        const effectiveParentId = dto.parent_id !== undefined 
-          ? (dto.parent_id && dto.parent_id !== '' ? dto.parent_id : null) 
-          : broker.parent_id;
+        const effectiveParentId =
+          dto.parent_id !== undefined
+            ? dto.parent_id && dto.parent_id !== ''
+              ? dto.parent_id
+              : null
+            : broker.parent_id;
 
         if (effectiveParentId) {
-          const existingCommission = await manager.findOne(CommissionMapping, { where: { sub_broker_id: id } });
+          const existingCommission = await manager.findOne(CommissionMapping, {
+            where: { sub_broker_id: id },
+          });
           if (existingCommission) {
-            await manager.update(CommissionMapping, existingCommission.id, { broker_id: effectiveParentId, share_percentage: dto.share_percentage });
+            await manager.update(CommissionMapping, existingCommission.id, {
+              broker_id: effectiveParentId,
+              share_percentage: dto.share_percentage,
+            });
           } else {
-            const newCommission = manager.create(CommissionMapping, { broker_id: effectiveParentId, sub_broker_id: id, share_percentage: dto.share_percentage });
+            const newCommission = manager.create(CommissionMapping, {
+              broker_id: effectiveParentId,
+              sub_broker_id: id,
+              share_percentage: dto.share_percentage,
+            });
             await manager.save(CommissionMapping, newCommission);
           }
         } else {
           await manager.delete(CommissionMapping, { sub_broker_id: id });
         }
-      } else if (dto.parent_id !== undefined && (dto.parent_id === '' || dto.parent_id === null)) {
+      } else if (
+        dto.parent_id !== undefined &&
+        (dto.parent_id === '' || dto.parent_id === null)
+      ) {
         await manager.delete(CommissionMapping, { sub_broker_id: id });
       }
 
@@ -415,12 +443,19 @@ export class UserManagementService {
         await this.rebuildDescendantPaths(manager, id);
       }
 
-      const updated = await manager.findOne(SubBroker, { where: { id }, relations: ['parent', 'children'] });
-      const commission = await manager.findOne(CommissionMapping, { where: { sub_broker_id: id } });
+      const updated = await manager.findOne(SubBroker, {
+        where: { id },
+        relations: ['parent', 'children'],
+      });
+      const commission = await manager.findOne(CommissionMapping, {
+        where: { sub_broker_id: id },
+      });
 
       return {
         ...updated,
-        share_percentage: commission ? Number(commission.share_percentage) : null,
+        share_percentage: commission
+          ? Number(commission.share_percentage)
+          : null,
       };
     });
   }

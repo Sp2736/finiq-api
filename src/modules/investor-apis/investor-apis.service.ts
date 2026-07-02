@@ -13,6 +13,7 @@ import { FinancialUtils } from 'src/common/utils/financial.utils';
 import { CamsSchemeDetail } from 'src/entities/cams-scheme-detail.entity';
 import { CamsSipStpDetail } from 'src/entities/cams-sip-stp-detail.entity';
 import { KarvySipRegistration } from 'src/entities/karvy-sip-registration.entity';
+import { logAndSanitize } from '../../common/utils/safe-error';
 
 @Injectable()
 export class InvestorApisService {
@@ -557,8 +558,9 @@ export class InvestorApisService {
 
       return holdings;
     } catch (error) {
-      this.logger.error(`Failed to fetch fund holdings: ${error.message}`);
-      throw new Error('Could not retrieve fund holdings at this time.');
+      throw new Error(
+        logAndSanitize(this.logger, 'Failed to fetch fund holdings', error, 'Could not retrieve fund holdings at this time.')
+      );
     }
   }
 

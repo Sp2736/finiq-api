@@ -11,10 +11,17 @@ import { OtpLog } from 'src/entities/otp-log.entity';
 import { User } from 'src/entities/user.entity';
 import { UserProfile } from 'src/entities/user-profile.entity';
 import { CompanyDetail } from '../../entities';
+import { SubBroker } from 'src/entities/sub-broker.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([OtpLog, User, CompanyDetail, UserProfile]),
+    TypeOrmModule.forFeature([
+      OtpLog,
+      User,
+      CompanyDetail,
+      UserProfile,
+      SubBroker,
+    ]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

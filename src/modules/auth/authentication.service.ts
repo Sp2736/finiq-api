@@ -15,7 +15,7 @@ import {
   ErrorMessages,
 } from '../../common/constants/error-codes';
 import { User } from 'src/entities/user.entity';
-import { UserProfile } from 'src/entities/user-profile.entity';
+import { UserProfile, UserRole } from 'src/entities/user-profile.entity';
 import * as crypto from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -115,9 +115,12 @@ export class AuthenticationService {
       .update(refreshToken)
       .digest('hex');
     if (user.refresh_token !== hashedToken) {
-      this.logger.error(`Refresh token mismatch for user ${userId}. Received token: ${refreshToken}, hashed received: ${hashedToken}, expected hash in DB: ${user.refresh_token}`);
-      // Token mismatch - possible token theft, clear all tokens
-      await this.repository.clearRefreshToken(userId);
+      this.logger.warn(
+        `Refresh token mismatch for user ${userId}. Token belongs to an older session.`,
+      );
+      // We DO NOT clear the refresh token here, because the DB token likely belongs
+      // to a newer, valid session (e.g., user logged in on another device).
+      // Clearing it would nuke the active session for the other device.
       throw new UnauthorizedException(
         'Invalid refresh token - session invalidated',
       );
@@ -149,12 +152,25 @@ export class AuthenticationService {
 
     const profiles = await this.repository.findUserProfiles(user.id);
 
+    const roles = UserMapper.mapRoles(profiles);
+    const brokerRole = roles.find(
+      (r) => r.role === UserRole.BROKER || r.role === UserRole.SUB_BROKER,
+    );
+    if (brokerRole) {
+      const linkedSubBroker = await this.repository.findSubBrokerByUserId(
+        user.id,
+      );
+      if (linkedSubBroker) {
+        (brokerRole as any).sub_broker_id = linkedSubBroker.id;
+      }
+    }
+
     return {
       id: user.id,
       phone_number: user.phone_number,
       status: user.status,
       last_login: user.last_login,
-      roles: UserMapper.mapRoles(profiles),
+      roles,
     };
   }
 
@@ -185,7 +201,8 @@ export class AuthenticationService {
     let logo_base64: string | null = null;
     if (companyIdForLogo) {
       try {
-        const companyDetail = await this.repository.findCompanyDetail(companyIdForLogo);
+        const companyDetail =
+          await this.repository.findCompanyDetail(companyIdForLogo);
         logo_base64 = companyDetail?.logo_base64 || null;
         if (companyDetail) {
           const addressParts = [
@@ -203,7 +220,21 @@ export class AuthenticationService {
           };
         }
       } catch (err) {
-        this.logger.warn(`Could not fetch company info for ${companyIdForLogo}: ${err}`);
+        this.logger.warn(
+          `Could not fetch company info for ${companyIdForLogo}: ${err}`,
+        );
+      }
+    }
+
+    const brokerRole = roles.find(
+      (r) => r.role === UserRole.BROKER || r.role === UserRole.SUB_BROKER,
+    );
+    if (brokerRole) {
+      const linkedSubBroker = await this.repository.findSubBrokerByUserId(
+        user.id,
+      );
+      if (linkedSubBroker) {
+        (brokerRole as any).sub_broker_id = linkedSubBroker.id;
       }
     }
 
@@ -226,7 +257,8 @@ export class AuthenticationService {
 
     if (!refresh_token) {
       const refreshExpiryDays =
-        this.configService.get<number>('JWT_REFRESH_TOKEN_EXPIRATION_DAYS') || 7;
+        this.configService.get<number>('JWT_REFRESH_TOKEN_EXPIRATION_DAYS') ||
+        7;
       refresh_token = crypto.randomBytes(64).toString('hex');
       const refreshExpiresAt = new Date(
         Date.now() + refreshExpiryDays * 24 * 60 * 60 * 1000,

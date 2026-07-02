@@ -4,11 +4,16 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import { logAndSanitize } from '../../common/utils/safe-error';
+
 @Injectable()
 export class SipsService {
+  private readonly logger = new Logger(SipsService.name);
+
   constructor(private readonly dataSource: DataSource) {}
 
   /**
@@ -95,7 +100,7 @@ export class SipsService {
     } catch (error) {
       console.error('SIP Summary Error:', error);
       throw new InternalServerErrorException(
-        error.message || 'Failed to fetch company SIP summary',
+        logAndSanitize(this.logger, 'Failed to fetch company SIP summary', error, 'Unable to fetch company SIP summary right now. Please try again.')
       );
     }
   }
@@ -156,7 +161,7 @@ export class SipsService {
     } catch (error) {
       console.error('Investor SIPs Error:', error);
       throw new InternalServerErrorException(
-        error.message || 'Failed to fetch investor SIPs',
+        logAndSanitize(this.logger, 'Failed to fetch investor SIPs', error, 'Unable to fetch investor SIPs right now. Please try again.')
       );
     }
   }
@@ -213,7 +218,7 @@ export class SipsService {
     } catch (error) {
       console.error('SIP Detail Error:', error);
       throw new InternalServerErrorException(
-        error.message || 'Failed to fetch SIP details',
+        logAndSanitize(this.logger, 'Failed to fetch SIP details', error, 'Unable to fetch SIP details right now. Please try again.')
       );
     }
   }

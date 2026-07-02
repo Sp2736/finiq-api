@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, HttpException, InternalServerErrorException } from '@nestjs/common';
 import { PaginationParams, PaginatedResponse } from '../types';
+import { logAndSanitize } from '../utils/safe-error';
 
 /**
  * Generic base service for reusable business logic
@@ -32,7 +33,11 @@ export class BaseService<Entity, CreateDto, UpdateDto> {
   }
 
   protected async handleError(error: any, context: string) {
-    this.logger.error(`Error in ${context}: ${error.message}`, error.stack);
-    throw error;
+    if (error instanceof HttpException) {
+      throw error;
+    }
+    throw new InternalServerErrorException(
+      logAndSanitize(this.logger, `Error in ${context}`, error, 'An unexpected error occurred. Please try again.')
+    );
   }
 }

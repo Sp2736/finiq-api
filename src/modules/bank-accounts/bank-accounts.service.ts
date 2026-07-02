@@ -1,11 +1,14 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { BankAccount } from '../../entities/bank-account.entity';
 import { InjectRepository } from '@nestjs/typeorm';
+import { logAndSanitize } from '../../common/utils/safe-error';
 
 @Injectable()
 export class BankAccountsService {
+  private readonly logger = new Logger(BankAccountsService.name);
+
   // Utilizing your existing TypeORM DataSource for secure database connections
   constructor(
     private readonly dataSource: DataSource,
@@ -36,7 +39,7 @@ export class BankAccountsService {
       return { success: true, data: results };
     } catch (error) {
       throw new InternalServerErrorException(
-        error.message || 'Failed to fetch bank accounts',
+        logAndSanitize(this.logger, 'Failed to fetch bank accounts', error, 'Unable to fetch bank accounts right now. Please try again.')
       );
     }
   }
@@ -65,7 +68,7 @@ export class BankAccountsService {
       return { success: true, data: result[0] };
     } catch (error) {
       throw new InternalServerErrorException(
-        error.message || 'Failed to add bank account',
+        logAndSanitize(this.logger, 'Failed to add bank account', error, 'Unable to add bank account right now. Please try again.')
       );
     }
   }

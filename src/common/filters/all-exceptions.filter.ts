@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { toSafeMessage } from '../utils/safe-error';
 
 /**
  * Global exception filter for consistent error responses
@@ -21,7 +22,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Internal Server Error';
+    let message: string | string[] = 'An unexpected error occurred. Please try again.';
     let error: any = null;
 
     if (exception instanceof HttpException) {
@@ -34,20 +35,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else {
         message = exceptionResponse as string;
       }
-    } else if (exception instanceof Error) {
-      message = exception.message;
-      error = exception.stack;
+    } else {
+      // For raw errors (e.g. Postgres drivers, TypeErrors), NEVER expose the raw message/stack to the client
+      message = toSafeMessage(exception);
     }
 
-    this.logger.error(
-      `Exception: ${message}`,
-      exception instanceof Error ? exception.stack : String(exception),
-    );
+    // Always log the FULL error server-side
+    const logMsg = exception instanceof Error ? exception.message : String(exception);
+    const stack = exception instanceof Error ? exception.stack : undefined;
+    this.logger.error(`[${request.method} ${request.url}] ${logMsg}`, stack);
 
     response.status(status).json({
       success: false,
       message,
-      error: process.env.NODE_ENV === 'production' ? undefined : error,
+      // error is intentionally omitted to prevent leaking stack traces or internal names
       timestamp: new Date().toISOString(),
       path: request.url,
     });
