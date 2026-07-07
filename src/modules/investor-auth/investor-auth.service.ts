@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthenticationRepository } from '../auth/authentication.repository'; // Reusing OTP logic
+import { S3Service } from 'src/modules/s3/s3.service';
 import { Investor } from 'src/entities/investor.entity';
 import {
   SendInvestorOtpDto,
@@ -33,6 +34,7 @@ export class InvestorAuthService {
     private readonly investorRepo: Repository<Investor>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly s3Service: S3Service,
   ) {}
 
   async sendOtp(dto: SendInvestorOtpDto) {
@@ -88,7 +90,12 @@ export class InvestorAuthService {
 
   // ── Private helper ─────────────────────────────────────────────────────────
   private async generateInvestorAuthResponse(investor: any) {
-    const logo_base64 = investor.company?.details?.logo_base64 || null;
+    let logo_url: string | null = null;
+    let logo_s3_key: string | null = null;
+    if (investor.company?.details?.logo_s3_key) {
+      logo_s3_key = investor.company.details.logo_s3_key;
+      logo_url = await this.s3Service.getSignedReadUrl(investor.company.details.logo_s3_key);
+    }
 
     let companyInfo: {
       name: string | null;
@@ -127,7 +134,8 @@ export class InvestorAuthService {
 
     return {
       access_token: accessToken,
-      logo_base64: logo_base64,
+      logo_url: logo_url,
+      logo_s3_key: logo_s3_key,
       company_info: companyInfo,
     };
   }

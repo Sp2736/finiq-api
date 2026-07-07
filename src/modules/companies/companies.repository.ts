@@ -14,4 +14,21 @@ export class CompaniesRepository extends BaseRepository<Company> {
     ) {
         super(companyRepo);
     }
+
+    async findCompanyDetail(companyId: string) {
+        const company = await this.companyRepo.findOne({
+            where: { id: companyId },
+            relations: ['details'],
+        });
+        return company?.details;
+    }
+
+    async updateCompanyDetailLogoKey(companyId: string, key: string | null) {
+        // Find detail first to get its ID, or update via company_id
+        const detail = await this.findCompanyDetail(companyId);
+        if (detail) {
+            detail.logo_s3_key = key;
+            await this.companyRepo.manager.save(detail);
+        }
+    }
 }

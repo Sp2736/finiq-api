@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthenticationRepository } from './authentication.repository';
 import { SendOtpDto, VerifyOtpDto } from './dto/auth.dto';
 import { UserMapper } from '../../common/utils/user.mapper';
+import { S3Service } from 'src/modules/s3/s3.service';
 import {
   ApiErrorCode,
   ErrorMessages,
@@ -29,6 +30,7 @@ export class AuthenticationService {
     private readonly repository: AuthenticationRepository,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly s3Service: S3Service,
   ) {}
 
   async sendOtp(dto: SendOtpDto) {
@@ -198,12 +200,16 @@ export class AuthenticationService {
       phone: string | null;
     } | null = null;
 
-    let logo_base64: string | null = null;
+    let logo_url: string | null = null;
+    let logo_s3_key: string | null = null;
     if (companyIdForLogo) {
       try {
         const companyDetail =
           await this.repository.findCompanyDetail(companyIdForLogo);
-        logo_base64 = companyDetail?.logo_base64 || null;
+        if (companyDetail?.logo_s3_key) {
+          logo_s3_key = companyDetail.logo_s3_key;
+          logo_url = await this.s3Service.getSignedReadUrl(companyDetail.logo_s3_key);
+        }
         if (companyDetail) {
           const addressParts = [
             companyDetail.address_line1,
@@ -277,7 +283,8 @@ export class AuthenticationService {
     return {
       access_token,
       refresh_token,
-      company_logo: logo_base64,
+      company_logo_url: logo_url,
+      company_logo_s3_key: logo_s3_key,
       company_info: companyInfo,
     };
   }

@@ -100,7 +100,7 @@ export class SipsController {
       );
     }
 
-    const pdfBuffer = this.systematicReportExportService.generatePDF(
+    const pdfBuffer = await this.systematicReportExportService.generatePDF(
       data,
       {
         type: type || 'All',

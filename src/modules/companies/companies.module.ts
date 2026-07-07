@@ -11,6 +11,7 @@ import { Tenant } from 'src/entities/tenant.entity';
 import { CompaniesController } from './companies.controller';
 import { CompaniesService } from './companies.service';
 import { CompaniesRepository } from './companies.repository';
+import { S3Module } from 'src/modules/s3/s3.module';
 
 @Module({
     imports: [
@@ -22,6 +23,7 @@ import { CompaniesRepository } from './companies.repository';
             UserProfile,
             Tenant,
         ]),
+        S3Module,
     ],
     controllers: [CompaniesController],
     providers: [CompaniesService, CompaniesRepository],

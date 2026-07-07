@@ -6,9 +6,10 @@ import { CapitalGainsService } from './capital-gains.service';
 import { CapitalGainsExportService } from './capital-gains-export.service';
 
 import { InvestorModule } from '../investors/investors.module';
+import { S3Module } from 'src/modules/s3/s3.module';
 
 @Module({
-  imports: [InvestorModule],
+  imports: [InvestorModule, S3Module],
   controllers: [CapitalGainsController],
   providers: [CapitalGainsService, CapitalGainsExportService],
   exports: [CapitalGainsService]

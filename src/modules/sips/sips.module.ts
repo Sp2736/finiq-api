@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { SipsController } from './sips.controller';
 import { SipsService } from './sips.service';
 import { SystematicReportExportService } from './systematic-report-export.service';
+import { S3Module } from 'src/modules/s3/s3.module';
 
 @Module({
+  imports: [S3Module],
   controllers: [SipsController],
   providers: [SipsService, SystematicReportExportService],
   exports: [SipsService],

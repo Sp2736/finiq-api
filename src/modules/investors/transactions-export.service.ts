@@ -47,16 +47,28 @@ const toTitleCase = (str: string): string => {
     .join(' ');
 };
 
+import { S3Service } from 'src/modules/s3/s3.service';
+
 @Injectable()
 export class TransactionsExportService {
   private readonly logger = new Logger(TransactionsExportService.name);
+
+  constructor(private readonly s3Service: S3Service) {}
 
   /**
    * Builds the Transactions Report PDF buffer from the exact snake_case
    * payload returned by InvestorsHoldingsService.getTransactionReport():
    *   { investor_name, mobile_no, email, transactions: [...] }
    */
-  public generatePDF(data: any, distributorInfo?: any): Buffer {
+  public async generatePDF(data: any, distributorInfo?: any): Promise<Buffer> {
+    if (distributorInfo?.logoS3Key) {
+      try {
+        const buffer = await this.s3Service.getObjectBuffer(distributorInfo.logoS3Key);
+        distributorInfo.logoBase64 = `data:image/png;base64,${buffer.toString('base64')}`;
+      } catch (err) {
+        this.logger.warn(`Could not fetch distributor logo from S3: ${err}`);
+      }
+    }
     // Landscape to comfortably fit the detailed transaction columns
     const doc = new jsPDF({
       orientation: 'landscape',

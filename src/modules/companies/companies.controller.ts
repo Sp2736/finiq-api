@@ -9,7 +9,12 @@ import {
   HttpStatus,
   UseGuards,
   Request,
+  UseInterceptors,
+  UploadedFile,
+  Patch,
+  Delete,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CompaniesService } from './companies.service';
 import { ResponseFormatter } from 'src/common';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -73,8 +78,35 @@ export class CompaniesController {
   async createArn(@Request() req, @Body() dto: CreateCompanyArnDto) {
     const result = await this.service.createArn(req.user, dto);
     return ResponseFormatter.success(
-      result,
       'Company ARN created successfully',
     );
+  }
+
+  @Post(':companyId/logo')
+  @Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadLogo(
+    @Request() req,
+    @Param('companyId') companyId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const result = await this.service.uploadLogo(req.user, companyId, file);
+    return ResponseFormatter.success(result, 'Company logo uploaded successfully');
+  }
+
+  @Delete(':companyId/logo')
+  @Roles(UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  async deleteLogo(@Request() req, @Param('companyId') companyId: string) {
+    const result = await this.service.deleteLogo(req.user, companyId);
+    return ResponseFormatter.success(result, 'Company logo deleted successfully');
+  }
+
+  @Get(':companyId/logo-url')
+  @HttpCode(HttpStatus.OK)
+  async getLogoUrl(@Request() req, @Param('companyId') companyId: string) {
+    const result = await this.service.getLogoUrl(req.user, companyId);
+    return ResponseFormatter.success(result, 'Company logo URL retrieved successfully');
   }
 }

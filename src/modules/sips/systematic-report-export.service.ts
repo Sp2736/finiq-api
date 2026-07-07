@@ -62,11 +62,24 @@ export interface SystematicReportExportOpts {
   groupBy: string;
 }
 
+import { S3Service } from 'src/modules/s3/s3.service';
+
 @Injectable()
 export class SystematicReportExportService {
   private readonly logger = new Logger(SystematicReportExportService.name);
 
-  public generatePDF(data: any[], opts: SystematicReportExportOpts, distributorInfo?: any): Buffer {
+  constructor(private readonly s3Service: S3Service) {}
+
+  public async generatePDF(data: any[], opts: SystematicReportExportOpts, distributorInfo?: any): Promise<Buffer> {
+    if (distributorInfo?.logoS3Key) {
+      try {
+        const buffer = await this.s3Service.getObjectBuffer(distributorInfo.logoS3Key);
+        distributorInfo.logoBase64 = `data:image/png;base64,${buffer.toString('base64')}`;
+      } catch (err) {
+        this.logger.warn(`Could not fetch distributor logo from S3: ${err}`);
+      }
+    }
+
     const doc = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',

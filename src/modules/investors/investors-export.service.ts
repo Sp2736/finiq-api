@@ -50,12 +50,24 @@ const drawPieSlice = (
   }
 };
 
+import { S3Service } from 'src/modules/s3/s3.service';
+
 @Injectable()
 export class InvestorsExportService {
-  public generatePortfolioValuationPDF(
+  constructor(private readonly s3Service: S3Service) {}
+
+  public async generatePortfolioValuationPDF(
     clientData: any,
     distributorInfo?: any,
-  ): Buffer {
+  ): Promise<Buffer> {
+    if (distributorInfo?.logoS3Key) {
+      try {
+        const buffer = await this.s3Service.getObjectBuffer(distributorInfo.logoS3Key);
+        distributorInfo.logoBase64 = `data:image/png;base64,${buffer.toString('base64')}`;
+      } catch (err) {
+        console.warn(`Could not fetch distributor logo from S3: ${err}`);
+      }
+    }
     const doc = new jsPDF('landscape', 'pt', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();

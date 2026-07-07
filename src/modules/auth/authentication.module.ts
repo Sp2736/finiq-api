@@ -12,6 +12,7 @@ import { User } from 'src/entities/user.entity';
 import { UserProfile } from 'src/entities/user-profile.entity';
 import { CompanyDetail } from '../../entities';
 import { SubBroker } from 'src/entities/sub-broker.entity';
+import { S3Module } from 'src/modules/s3/s3.module';
 
 @Module({
   imports: [
@@ -28,9 +29,10 @@ import { SubBroker } from 'src/entities/sub-broker.entity';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET') || 'secret',
-        signOptions: { expiresIn: '1h' },
+        signOptions: { expiresIn: '1d' },
       }),
     }),
+    S3Module,
   ],
   controllers: [AuthenticationController],
   providers: [AuthenticationService, AuthenticationRepository, JwtStrategy],

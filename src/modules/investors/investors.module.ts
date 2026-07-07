@@ -22,6 +22,7 @@ import { InvestorRepository } from './investors.repository';
 import { InvestorsHoldingsService } from './investors-holdings.service';
 import { InvestorsExportService } from './investors-export.service';
 import { TransactionsExportService } from './transactions-export.service';
+import { S3Module } from 'src/modules/s3/s3.module';
 
 /**
  * Investor Module - Handles all investor-related operations
@@ -44,6 +45,7 @@ import { TransactionsExportService } from './transactions-export.service';
     ]),
     CommonModule,
     TaxCalculationModule,
+    S3Module,
   ],
   controllers: [InvestorController],
   providers: [

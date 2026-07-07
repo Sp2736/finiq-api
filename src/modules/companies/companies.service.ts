@@ -14,6 +14,7 @@ import { PaginationHelper } from 'src/common';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { CreateCompanyUserDto } from './dto/create-company-user.dto';
 import { CreateCompanyArnDto } from './dto/create-company-arn.dto';
+import { S3Service } from 'src/modules/s3/s3.service';
 
 @Injectable()
 export class CompaniesService extends BaseService<Company, any, any> {
@@ -28,6 +29,7 @@ export class CompaniesService extends BaseService<Company, any, any> {
     private readonly userRepo: Repository<User>,
     @InjectRepository(UserProfile)
     private readonly userProfileRepo: Repository<UserProfile>,
+    private readonly s3Service: S3Service,
   ) {
     super();
   }
@@ -343,5 +345,54 @@ export class CompaniesService extends BaseService<Company, any, any> {
 
       return savedArn;
     });
+  }
+
+  async uploadLogo(
+    userPayload: any,
+    companyId: string,
+    file: Express.Multer.File,
+  ) {
+    this.checkAdminAuthorization(userPayload, companyId);
+    const company = await this.repository.findById(companyId);
+    if (!company) throw new BadRequestException('Company not found');
+
+    const ext = file.mimetype === 'image/png' ? 'png' : file.mimetype === 'image/jpeg' ? 'jpg' : 'png';
+    const key = `company-logos/${companyId}/logo.${ext}`;
+    
+    await this.s3Service.uploadObject(key, file.buffer, file.mimetype);
+    await this.repository.updateCompanyDetailLogoKey(companyId, key);
+    const url = await this.s3Service.getSignedReadUrl(key);
+    
+    return { logo_s3_key: key, logo_url: url };
+  }
+
+  async deleteLogo(userPayload: any, companyId: string) {
+    this.checkAdminAuthorization(userPayload, companyId);
+    const details = await this.repository.findCompanyDetail(companyId);
+    if (details?.logo_s3_key) {
+      await this.s3Service.deleteObject(details.logo_s3_key);
+    }
+    await this.repository.updateCompanyDetailLogoKey(companyId, null);
+    return { success: true };
+  }
+
+  async getLogoUrl(userPayload: any, companyId: string) {
+    // Only check auth, let them fetch it
+    // Or allow any authenticated user. For now, assuming any valid user is fine, but keeping role check if needed.
+    // The route requires roles so no need to check here.
+    const details = await this.repository.findCompanyDetail(companyId);
+    if (!details?.logo_s3_key) return { logo_url: null };
+    const url = await this.s3Service.getSignedReadUrl(details.logo_s3_key);
+    return { logo_url: url };
+  }
+
+  private checkAdminAuthorization(userPayload: any, companyId: string) {
+    const adminRole = userPayload.roles.find((r: any) =>
+      [UserRole.COMPANY_ADMIN, UserRole.FINIQ_ADMIN, UserRole.TENANT_ADMIN].includes(r.role),
+    );
+    if (!adminRole) throw new BadRequestException('User is not authorized');
+    if (adminRole.role === UserRole.COMPANY_ADMIN && adminRole.company_id !== companyId) {
+      throw new BadRequestException('Not authorized to update this company logo');
+    }
   }
 }

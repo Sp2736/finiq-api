@@ -46,5 +46,5 @@ export class CompanyDetail {
   country: string;
 
   @Column({ type: 'text', nullable: true })
-  logo_base64: string;
+  logo_s3_key: string | null;
 }

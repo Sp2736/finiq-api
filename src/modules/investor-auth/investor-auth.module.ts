@@ -6,6 +6,7 @@ import { InvestorAuthController } from './investor-auth.controller';
 import { InvestorAuthService } from './investor-auth.service';
 import { AuthenticationModule } from '../auth/authentication.module';
 import { Investor } from 'src/entities/investor.entity';
+import { S3Module } from 'src/modules/s3/s3.module';
 
 @Module({
     imports: [
@@ -20,6 +21,7 @@ import { Investor } from 'src/entities/investor.entity';
                 signOptions: { expiresIn: '7d' }, // Longer session for investors?
             }),
         }),
+        S3Module,
     ],
     controllers: [InvestorAuthController],
     providers: [InvestorAuthService],

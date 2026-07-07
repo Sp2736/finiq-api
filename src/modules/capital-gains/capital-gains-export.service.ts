@@ -3,6 +3,8 @@ import * as ExcelJS from 'exceljs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { CapitalGainsService } from './capital-gains.service';
+import { InvestorService } from '../investors/investors.service';
+import { S3Service } from 'src/modules/s3/s3.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN TOKENS (Navy / Steel-Blue / White palette)
@@ -51,13 +53,12 @@ const toTitleCase = (str: string): string => {
     .join(' ');
 };
 
-import { InvestorService } from '../investors/investors.service';
-
 @Injectable()
 export class CapitalGainsExportService {
   constructor(
     private readonly capitalGainsService: CapitalGainsService,
     private readonly investorService: InvestorService,
+    private readonly s3Service: S3Service,
   ) {}
   
   public async exportCapitalGains(
@@ -86,13 +87,21 @@ export class CapitalGainsExportService {
     
     // Fallback if distributor info is not provided but needed by export templates
     if (distributorInfo) {
+      if (distributorInfo.logoS3Key) {
+        try {
+          const buffer = await this.s3Service.getObjectBuffer(distributorInfo.logoS3Key);
+          distributorInfo.logoBase64 = `data:image/png;base64,${buffer.toString('base64')}`;
+        } catch (err) {
+          console.warn(`Could not fetch distributor logo from S3: ${err}`);
+        }
+      }
       data.distributorInfo = distributorInfo;
     }
 
     if (format === 'excel') {
       return await this.generateExcel(data, from_date, to_date);
     } else {
-      return this.generatePDF(data, from_date, to_date);
+      return await this.generatePDF(data, from_date, to_date);
     }
   }
 
@@ -880,7 +889,7 @@ export class CapitalGainsExportService {
     return Buffer.from(arrayBuffer);
   }
 
-  private generatePDF(data: any, from_date:string, to_date:string): Buffer {
+  private async generatePDF(data: any, from_date:string, to_date:string): Promise<Buffer> {
     const doc = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',

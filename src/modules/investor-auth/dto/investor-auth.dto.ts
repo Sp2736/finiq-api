@@ -53,6 +53,6 @@ export interface InvestorLoginResponse {
     name: string;
     mobile: string;
     email: string;
-    logo_base64: string | null; // This matches the field we are injecting in the service
+    logo_url: string | null; // This matches the field we are injecting in the service
   };
 }

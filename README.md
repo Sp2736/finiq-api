@@ -38,9 +38,3 @@ $ npm run test:e2e
 # test coverage
 $ npm run test:cov
 ```
-
-## Contact
-
-- Author - Murtaza Bhaisaheb
-- Email - [admin@kaelivtech.com](mailto:admin@kaelivtech.com)
-- Website - [kaelivtech.com](https://kaelivtech.com)
