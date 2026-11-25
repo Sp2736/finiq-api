@@ -435,3 +435,12 @@ What's solid: central hierarchy scoping, sanitised errors, hashed refresh tokens
 <div align="center">
 <sub>One resolver for access. One envelope for responses. Rules in data, not in code.</sub>
 </div>
+
+
+---
+
+## 📊 Live Stats
+
+<!--LIVE_STATS_START-->
+<!-- auto-generated — do not edit manually -->
+<!--LIVE_STATS_END-->
